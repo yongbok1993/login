@@ -2,24 +2,41 @@ import { checkLink, comoOverview, confirmLink, counselingView, getLink, recheck,
 import { get } from '../lib/db.js';
 import { audit, listAudit } from '../services/audit.js';
 import {
-  adminCancelEnrollment, assignManual, autoAssignLink, EnrollError, enrollmentsOf, recordAttendance,
+  adminCancelEnrollment, assignManual, autoAssignLink, EnrollError, enrollmentsOf, growApplications, recordAttendance, setGrowSelection,
 } from '../services/enrollments.js';
+import { createNotice, deleteNotice, getNotice, listNotices, parseNoticeForm, updateNotice } from '../services/notices.js';
+import { safeEqual } from '../lib/crypto.js';
+import { loginBlock, recordAttempt } from '../services/login.js';
 import {
   createProgram, createSession, getProgram, getSession, linkProgramStats, listPrograms, listSessions, parseProgramForm,
   parseSessionForm, sessionRoster, updateProgram, updateSession,
 } from '../services/programs.js';
 import {
-  confirmPhone, getRegistration, getUser, listConsents, listRegistrants, listSelectedParticipants, resetPin, setInternalStatus,
-  setSelected,
+  confirmPhone, getRegistration, getUser, hasManager, listConsents, listRegistrants, listSelectedParticipants, listStaff, resetPin,
+  setInternalStatus, setRole, setSelected,
 } from '../services/users.js';
 import { hashPin, temporaryPin } from '../lib/pin.js';
 import { clearPhoneFailures } from '../services/login.js';
 import * as views from '../views/admin.js';
-import { deny, field, fieldList, intParam, redirect, render, requireManager, requireStaff } from './helpers.js';
+import { deny, field, fieldList, intParam, redirect, render, requireLogin, requireManager, requireStaff } from './helpers.js';
 
 export function adminRoutes(r) {
   const staff = requireStaff;
   const manager = requireManager;
+
+  // ── 첫 관리자 지정: 전체 관리자가 한 명도 없을 때만, 로그인한 본인 계정을 SESSION_SECRET 확인 후 관리자로 ──
+  const setupOpen = async (c) => ((await hasManager(c.db)) ? deny(c, 404) : null);
+  r.get('/admin/setup', requireLogin, setupOpen, (c) => render(c, views.setupPage, {}));
+  r.post('/admin/setup', requireLogin, setupOpen, async (c) => {
+    if (await loginBlock(c.db, { phone: c.user.phone })) return render(c, views.setupPage, { error: '시도가 많아 잠시 잠겼습니다.' }, 429);
+    const ok = safeEqual(field(c, 'secret'), c.cfg.sessionSecret);
+    await recordAttempt(c.db, { kind: 'pin', phone: c.user.phone, ip: c.ip, success: ok });
+    if (!ok) return render(c, views.setupPage, { error: '값이 맞지 않습니다.' }, 422);
+    await setRole(c.db, c.user.id, c.user.id, 'manager');
+    await c.session.regenerate(c.user.id);
+    await c.session.flash('ok', '전체 관리자로 지정되었습니다.');
+    return redirect(c, '/admin');
+  });
 
   r.get('/admin', staff, async (c) => {
     const n = async (sql) => (await get(c.db, sql)).n;
@@ -28,6 +45,8 @@ export function adminRoutes(r) {
       selected: await n("SELECT COUNT(*) n FROM users WHERE role = 'participant' AND is_selected = 1"),
       programs: await n('SELECT COUNT(*) n FROM programs'),
       comoAttention: await n("SELECT COUNT(*) n FROM como_links WHERE status IN ('conflict', 'error', 'needs_recheck')"),
+      growPending: await n("SELECT COUNT(*) n FROM enrollments WHERE status = 'active' AND selection = 'pending'"),
+      notices: await n('SELECT COUNT(*) n FROM notices'),
     });
   });
 
@@ -93,6 +112,75 @@ export function adminRoutes(r) {
     if (c.como.configured && user.is_selected) await checkLink(c.db, c.como, await getUser(c.db, user.id), c.user.id);
     await c.session.flash('ok', '연락처 확인을 기록했습니다.');
     return redirect(c, `/admin/participants/${user.id}`);
+  });
+
+  // 권한 지정(전체 관리자만): 참여자 ↔ 운영 담당 ↔ 전체 관리자
+  r.post('/admin/users/:id/role', manager, async (c) => {
+    const id = intParam(c.params.id);
+    const result = id ? await setRole(c.db, c.user.id, id, field(c, 'role')) : 'not_found';
+    const msg = { ok: '권한을 변경했습니다.', last_manager: '마지막 전체 관리자는 해제할 수 없습니다.', invalid: '잘못된 권한입니다.',
+      not_found: '사용자를 찾을 수 없습니다.' }[result];
+    await c.session.flash(result === 'ok' ? 'ok' : 'error', msg);
+    if (id === c.user.id) return redirect(c, '/admin');
+    return redirect(c, field(c, 'back') === 'staff' ? '/admin/staff' : `/admin/participants/${id}`);
+  });
+
+  r.get('/admin/staff', manager, async (c) => render(c, views.staffPage, await listStaff(c.db)));
+
+  // ── 공지 ──
+  r.get('/admin/notices', staff, async (c) => render(c, views.noticesAdminPage, await listNotices(c.db)));
+  r.get('/admin/notices/new', staff, (c) => render(c, views.noticeFormPage, { values: { audience: 'public' } }));
+  r.post('/admin/notices/new', staff, async (c) => {
+    const { value, errors } = parseNoticeForm(c.body);
+    if (Object.keys(errors).length) return render(c, views.noticeFormPage, { values: value, errors }, 422);
+    await createNotice(c.db, c.user.id, value);
+    await c.session.flash('ok', '공지를 등록했습니다.');
+    return redirect(c, '/admin/notices');
+  });
+  async function notice(c) {
+    const id = intParam(c.params.id);
+    return (id && (await getNotice(c.db, id))) || null;
+  }
+  r.get('/admin/notices/:id', staff, async (c) => {
+    const n = await notice(c);
+    if (!n) return deny(c, 404);
+    return render(c, views.noticeFormPage, { notice: n, values: n });
+  });
+  r.post('/admin/notices/:id', staff, async (c) => {
+    const n = await notice(c);
+    if (!n) return deny(c, 404);
+    const { value, errors } = parseNoticeForm(c.body);
+    if (Object.keys(errors).length) return render(c, views.noticeFormPage, { notice: n, values: value, errors }, 422);
+    await updateNotice(c.db, c.user.id, n.id, value);
+    await c.session.flash('ok', '저장했습니다.');
+    return redirect(c, '/admin/notices');
+  });
+  r.post('/admin/notices/:id/delete', staff, async (c) => {
+    const n = await notice(c);
+    if (!n) return deny(c, 404);
+    await deleteNotice(c.db, c.user.id, n.id);
+    await c.session.flash('ok', '삭제했습니다.');
+    return redirect(c, '/admin/notices');
+  });
+
+  // ── Grow 희망 신청 선정 ──
+  r.get('/admin/grow', staff, async (c) => {
+    const status = ['pending', 'selected', 'not_selected', 'all'].includes(c.query.get('status')) ? c.query.get('status') : 'pending';
+    return render(c, views.growAdminPage, { rows: await growApplications(c.db, { status }), status });
+  });
+
+  r.post('/admin/enrollments/:id/selection', staff, async (c) => {
+    const e = await enrollment(c);
+    if (!e) return deny(c, 404);
+    try {
+      await setGrowSelection(c.db, c.user.id, e.id, field(c, 'decision'));
+      await c.session.flash('ok', '저장했습니다.');
+    } catch (err) {
+      if (!(err instanceof EnrollError)) throw err;
+      await c.session.flash('error', err.code === 'full' ? '정원이 찼습니다. 정원을 늘리거나 다른 선정을 해제해 주세요.' : '변경할 수 없습니다.');
+    }
+    const back = field(c, 'back');
+    return redirect(c, back.startsWith('/admin/') ? back : `/admin/sessions/${e.session_id}`);
   });
 
   // ── 프로그램·회차 ──

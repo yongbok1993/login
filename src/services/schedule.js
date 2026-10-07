@@ -1,4 +1,5 @@
 import { all } from '../lib/db.js';
+import { counted } from './enrollments.js';
 import { todaySeoul } from '../lib/time.js';
 
 // 참여자 본인 일정. 모든 조회는 로그인 세션의 사용자 ID로만 한다.
@@ -11,7 +12,7 @@ export function upcomingFor(db, userId, today = todaySeoul()) {
       s.place, p.id AS program_id, p.name AS program_name, p.theme, p.assign_mode, p.self_cancel
     FROM enrollments e JOIN program_sessions s ON s.id = e.session_id JOIN programs p ON p.id = s.program_id
     LEFT JOIN attendance a ON a.enrollment_id = e.id
-    WHERE e.user_id = ? AND e.status = 'active' AND s.is_cancelled = 0 AND ${PERSONAL}
+    WHERE e.user_id = ? AND ${counted('e')} AND s.is_cancelled = 0 AND ${PERSONAL}
       AND a.enrollment_id IS NULL AND (s.date IS NULL OR s.date >= ?)
     ORDER BY s.date IS NULL, s.date, s.start_time IS NULL, s.start_time, p.sort_order, s.round_no`, userId, today);
 }
@@ -44,10 +45,17 @@ export function groupAttended(rows) {
 /** Grow 신청 목록: 신청 가능한 회차와 본인 신청 여부 */
 export function growSessionsFor(db, userId, today = todaySeoul()) {
   return all(db, `SELECT s.*, p.id AS program_id, p.name AS program_name, p.self_cancel,
-      (SELECT COUNT(*) FROM enrollments x WHERE x.session_id = s.id AND x.status = 'active') AS active_count,
-      e.id AS my_enrollment_id, e.status AS my_status
+      (SELECT COUNT(*) FROM enrollments x WHERE x.session_id = s.id AND ${counted('x')}) AS active_count,
+      e.id AS my_enrollment_id, e.status AS my_status, e.selection AS my_selection
     FROM program_sessions s JOIN programs p ON p.id = s.program_id
     LEFT JOIN enrollments e ON e.session_id = s.id AND e.user_id = ?
     WHERE p.assign_mode = 'select' AND s.is_cancelled = 0 AND (s.date IS NULL OR s.date >= ?)
     ORDER BY p.sort_order, s.date IS NULL, s.date, s.start_time, s.round_no`, userId, today);
+}
+
+/** 선정 대기 중인 본인 희망 신청 수 */
+export async function pendingWishCount(db, userId) {
+  const rows = await all(db, `SELECT COUNT(*) n FROM enrollments e JOIN program_sessions s ON s.id = e.session_id
+    WHERE e.user_id = ? AND e.status = 'active' AND e.selection = 'pending' AND s.is_cancelled = 0`, userId);
+  return rows[0].n;
 }

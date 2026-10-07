@@ -27,18 +27,22 @@ function headerNav(ctx, area) {
     return html`
       ${manager ? navLink(ctx, '/admin/participants', '참여자') : ''}
       ${navLink(ctx, '/admin/programs', '프로그램')}
+      ${navLink(ctx, '/admin/grow', 'Grow 선정')}
+      ${navLink(ctx, '/admin/notices', '공지')}
       ${navLink(ctx, '/admin/link', 'Link 배정')}
       ${manager ? navLink(ctx, '/admin/como', '꼬모 연동') : ''}
+      ${manager ? navLink(ctx, '/admin/staff', '관리자') : ''}
       ${manager ? navLink(ctx, '/admin/audit', '변경 기록') : ''}
       ${logoutForm(ctx)}`;
   }
   if (!u) {
-    return html`${navLink(ctx, '/#programs', '프로그램')}${navLink(ctx, '/me', '나의 현황')}${navLink(ctx, '/login', '로그인')}`;
+    return html`${navLink(ctx, '/#programs', '프로그램')}${navLink(ctx, '/notices', '공지')}${navLink(ctx, '/me', '나의 현황')}${navLink(ctx, '/login', '로그인')}`;
   }
   if (isStaff) return html`${navLink(ctx, '/admin', '관리')}${logoutForm(ctx)}`;
   return html`
     ${navLink(ctx, '/me', '나의 현황')}
     ${u.is_selected ? navLink(ctx, '/me/programs', '프로그램') : navLink(ctx, '/#programs', '프로그램')}
+    ${navLink(ctx, '/notices', '공지')}
     ${navLink(ctx, '/me/profile', '내 정보')}
     ${logoutForm(ctx)}`;
 }

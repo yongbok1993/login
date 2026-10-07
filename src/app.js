@@ -7,6 +7,7 @@ import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
 import { deny, redirect, render, respond } from './routes/helpers.js';
 import { meRoutes } from './routes/me.js';
+import { noticeRoutes } from './routes/notices.js';
 import { groupByTheme, listPrograms } from './services/programs.js';
 import { getUser } from './services/users.js';
 import { homePage } from './views/public.js';
@@ -44,6 +45,7 @@ function buildRouter() {
   r.get('/healthz', (c) => respond(c, 'ok', { type: 'text/plain; charset=utf-8' }));
   r.get('/', async (c) => render(c, homePage, groupByTheme(await listPrograms(c.db, { publicOnly: true })), 200, { session: !!c.user }));
   authRoutes(r);
+  noticeRoutes(r);
   meRoutes(r);
   adminRoutes(r);
   return r;

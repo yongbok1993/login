@@ -3,7 +3,9 @@ import { formatPhone, maskPhone } from '../lib/phone.js';
 import { formatDate, formatDateTime, formatTimeRange } from '../lib/time.js';
 import { LINK_STATUS } from '../como/mapping.js';
 import { ASSIGN_MODES } from '../services/programs.js';
-import { INTERNAL_STATUS } from '../services/users.js';
+import { INTERNAL_STATUS, ROLES } from '../services/users.js';
+import { SELECTION } from '../services/enrollments.js';
+import { AUDIENCE } from '../services/notices.js';
 import { THEMES } from '../site.js';
 import { csrfField, errorSummary, field, layout, textInput } from './layout.js';
 
@@ -47,6 +49,8 @@ export function dashboardPage(ctx, counts) {
     <div class="tiles">
       ${isManager(ctx) ? html`<a class="tile" href="/admin/participants?status=received"><span>신규 접수</span><b>${counts.received}</b></a>
       <a class="tile" href="/admin/participants?status=selected"><span>선정 참여자</span><b>${counts.selected}</b></a>` : ''}
+      <a class="tile" href="/admin/grow"><span>Grow 선정 대기</span><b>${counts.growPending}</b></a>
+      <a class="tile" href="/admin/notices"><span>공지</span><b>${counts.notices}</b></a>
       <a class="tile" href="/admin/programs"><span>프로그램</span><b>${counts.programs}</b></a>
       ${isManager(ctx) ? html`<a class="tile" href="/admin/como"><span>꼬모 확인 필요</span><b>${counts.comoAttention}</b></a>` : ''}
     </div>`);
@@ -112,6 +116,16 @@ export function participantPage(ctx, { user, registration, consents, enrollments
         ${user.phone_confirmed_at ? '' : postButton(ctx, `/admin/participants/${user.id}/confirm-phone`, '연락처 확인', { cls: 'btn small ghost' })}
         ${postButton(ctx, `/admin/participants/${user.id}/pin-reset`, 'PIN 초기화', { cls: 'btn small ghost' })}
       </div>
+      <form method="post" action="/admin/users/${user.id}/role" class="inline-form role-form">
+        ${csrfField(ctx)}
+        <label for="role">관리자 지정</label>
+        <select id="role" name="role">
+          <option value="staff">운영 담당</option>
+          <option value="manager">전체 관리자</option>
+        </select>
+        <button type="submit" class="btn small ghost">지정</button>
+      </form>
+      <p class="small muted">관리자로 지정하면 참여자 선정이 해제되고 참여자 목록에서 빠집니다.</p>
     </div>
 
     <div class="card">
@@ -279,12 +293,16 @@ export function sessionPage(ctx, { session, roster, candidates, values, errors =
 
     ${showRoster ? html`<div class="card">
       <h2 class="card-title">참여자 · 출석 <span class="muted small">(${session.active_count}${session.capacity !== null ? ` / ${session.capacity}` : ''})</span></h2>
+      ${session.assign_mode === 'select' && session.pending_count ? html`<p class="small">선정 대기 ${session.pending_count}명</p>` : ''}
       ${table(['이름', '전화번호', '구분', '상태', '출석', ''], roster.map((r) => html`<tr>
         <td>${r.name}</td>
         <td>${phoneFor(ctx, r.phone)}</td>
-        <td>${{ auto: '자동 배정', select: '선택 신청', manual: '관리자 배정' }[r.source]}</td>
-        <td>${r.status === 'active' ? '유효' : `취소${r.cancel_reason === 'self' ? '(본인)' : r.cancel_reason === 'deselected' ? '(선정 해제)' : ''}`}</td>
-        <td>${r.status === 'active' ? html`<form method="post" action="/admin/enrollments/${r.id}/attendance" class="inline-form">
+        <td>${{ auto: '자동 배정', select: '희망 신청', manual: '관리자 배정' }[r.source]}</td>
+        <td>${r.status === 'active' ? (r.selection ? html`${SELECTION[r.selection]}
+          ${r.selection !== 'selected' ? postButton(ctx, `/admin/enrollments/${r.id}/selection`, '선정', { hidden: { decision: 'selected' } }) : ''}
+          ${r.selection !== 'not_selected' && !r.attendance ? postButton(ctx, `/admin/enrollments/${r.id}/selection`, '미선정', { cls: 'btn small ghost', hidden: { decision: 'not_selected' } }) : ''}` : '유효')
+          : `취소${r.cancel_reason === 'self' ? '(본인)' : r.cancel_reason === 'deselected' ? '(선정 해제)' : ''}`}</td>
+        <td>${r.status === 'active' && (!r.selection || r.selection === 'selected') ? html`<form method="post" action="/admin/enrollments/${r.id}/attendance" class="inline-form">
           ${csrfField(ctx)}
           <label class="sr-only" for="att-${r.id}">${r.name} 출석</label>
           <select id="att-${r.id}" name="status">
@@ -358,4 +376,108 @@ export function auditPage(ctx, rows) {
       <td>${formatDateTime(r.created_at)}</td><td>${r.actor_name || '-'}</td><td>${r.action}</td>
       <td>${r.target_type} ${r.target_id ?? ''}</td><td class="mono">${r.detail || ''}</td>
     </tr>`))}`);
+}
+
+// ── Grow 선정 ─────────────────────────────────────────
+
+const GROW_TABS = { pending: '선정 대기', selected: '선정', not_selected: '미선정', all: '전체' };
+
+export function growAdminPage(ctx, { rows, status }) {
+  const back = `/admin/grow?status=${status}`;
+  return page(ctx, 'Grow 선정', html`
+    <h1 class="page-title">Grow 희망 신청 선정</h1>
+    <p class="small muted">참여자가 희망 신청한 성장(Grow) 활동입니다. 선정한 참여자만 일정에 표시됩니다. 정원은 선정 인원 기준입니다.</p>
+    <nav class="tabs" aria-label="상태">${Object.entries(GROW_TABS).map(([k, v]) => html`
+      <a href="/admin/grow?status=${k}"${k === status ? html` aria-current="page"` : ''}>${v}</a>`)}</nav>
+    ${table(['프로그램', '일정', '참여자', '전화번호', '신청일', '선정/정원', '상태', '처리'], rows.map((r) => html`<tr>
+      <td><a href="/admin/sessions/${r.session_id}">${r.program_name}${r.round_no ? ` ${r.round_no}회차` : ''}</a></td>
+      <td>${when(r)}</td>
+      <td>${r.name}</td>
+      <td>${phoneFor(ctx, r.phone)}</td>
+      <td>${formatDateTime(r.created_at).replace(/ \(.\) \d\d:\d\d$/, '')}</td>
+      <td>${r.selected_count}${r.capacity !== null ? ` / ${r.capacity}` : ''}</td>
+      <td>${SELECTION[r.selection]}</td>
+      <td><div class="row-actions">
+        ${r.selection !== 'selected' ? postButton(ctx, `/admin/enrollments/${r.id}/selection`, '선정', { hidden: { decision: 'selected', back } }) : ''}
+        ${r.selection !== 'not_selected' ? postButton(ctx, `/admin/enrollments/${r.id}/selection`, '미선정', { cls: 'btn small ghost', hidden: { decision: 'not_selected', back } }) : ''}
+        ${r.selection !== 'pending' ? postButton(ctx, `/admin/enrollments/${r.id}/selection`, '대기로', { cls: 'btn small ghost', hidden: { decision: 'pending', back } }) : ''}
+      </div></td>
+    </tr>`), status === 'pending' ? '선정 대기 중인 희망 신청이 없습니다.' : '없음')}`);
+}
+
+// ── 공지 ─────────────────────────────────────────────
+
+export function noticesAdminPage(ctx, list) {
+  return page(ctx, '공지', html`
+    <h1 class="page-title">공지</h1>
+    <p class="actions"><a class="btn small" href="/admin/notices/new">공지 작성</a></p>
+    ${table(['제목', '공개 범위', '고정', '작성', ''], list.map((n) => html`<tr>
+      <td><a href="/admin/notices/${n.id}">${n.title}</a></td>
+      <td>${AUDIENCE[n.audience]}</td>
+      <td>${n.is_pinned ? '고정' : '-'}</td>
+      <td>${formatDateTime(n.created_at)}${n.author ? ` · ${n.author}` : ''}</td>
+      <td><a href="/notices/${n.id}">보기</a></td>
+    </tr>`), '등록된 공지가 없습니다.')}`);
+}
+
+export function noticeFormPage(ctx, { notice, values = {}, errors = {} }) {
+  const action = notice ? `/admin/notices/${notice.id}` : '/admin/notices/new';
+  return page(ctx, notice ? '공지 수정' : '공지 작성', html`
+    <p class="crumb"><a href="/admin/notices">공지</a></p>
+    <h1 class="page-title">${notice ? '공지 수정' : '공지 작성'}</h1>
+    ${errorSummary(errors)}
+    <form method="post" action="${action}" class="form card" novalidate>
+      ${csrfField(ctx)}
+      ${field({ id: 'title', label: '제목', error: errors.title,
+        input: (d) => textInput({ id: 'title', value: values.title, maxlength: 120, required: true, error: errors.title, describedBy: d }) })}
+      <div class="field">
+        <label for="body">내용</label>
+        <textarea id="body" name="body" rows="10" maxlength="10000">${values.body || ''}</textarea>
+      </div>
+      <fieldset class="field" id="audience">
+        <legend class="label">공개 범위</legend>
+        ${Object.entries(AUDIENCE).map(([k, v]) => html`<label class="check"><input type="radio" name="audience" value="${k}"
+          ${values.audience === k ? html`checked` : ''}><span>${v}${k === 'public' ? ' (홈 공지 메뉴)' : ' (로그인한 선정 참여자)'}</span></label>`)}
+        ${errors.audience ? html`<p class="error">${errors.audience}</p>` : ''}
+      </fieldset>
+      <label class="check"><input type="checkbox" name="is_pinned" value="1"${values.is_pinned ? html` checked` : ''}><span>목록 맨 위에 고정</span></label>
+      <div class="actions"><button type="submit" class="btn">${notice ? '저장' : '등록'}</button></div>
+    </form>
+    ${notice ? html`<form method="post" action="/admin/notices/${notice.id}/delete" class="aside-link">
+      ${csrfField(ctx)}<button type="submit" class="linklike">공지 삭제</button></form>` : ''}`);
+}
+
+// ── 관리자 계정 ─────────────────────────────────────────
+
+export function staffPage(ctx, list) {
+  return page(ctx, '관리자', html`
+    <h1 class="page-title">관리자</h1>
+    <p class="small muted">관리자 지정은 참여자 상세 화면에서 합니다. 운영 담당은 프로그램·회차·출석·공지·Grow 선정을, 전체 관리자는 참여자 정보·선정·권한까지 관리합니다.</p>
+    ${table(['이름', '전화번호', '권한', ''], list.map((u) => html`<tr>
+      <td>${u.name}</td>
+      <td>${formatPhone(u.phone)}</td>
+      <td>${ROLES[u.role]}</td>
+      <td><div class="row-actions">
+        ${u.role === 'staff' ? postButton(ctx, `/admin/users/${u.id}/role`, '전체 관리자로', { cls: 'btn small ghost', hidden: { role: 'manager', back: 'staff' } }) : ''}
+        ${u.role === 'manager' ? postButton(ctx, `/admin/users/${u.id}/role`, '운영 담당으로', { cls: 'btn small ghost', hidden: { role: 'staff', back: 'staff' } }) : ''}
+        ${postButton(ctx, `/admin/users/${u.id}/role`, '권한 해제', { cls: 'btn small ghost', hidden: { role: 'participant', back: 'staff' } })}
+      </div></td>
+    </tr>`))}`);
+}
+
+export function setupPage(ctx, { error }) {
+  return layout(ctx, {
+    title: '첫 관리자 지정',
+    area: 'me',
+    body: html`<section class="sec narrow"><div class="wrap">
+      <h1 class="page-title">첫 관리자 지정</h1>
+      <form method="post" action="/admin/setup" class="form card" novalidate>
+        ${csrfField(ctx)}
+        <p class="small muted">전체 관리자가 아직 없을 때 한 번만 사용합니다. Cloudflare Pages에 설정한 SESSION_SECRET 값을 입력하면 지금 로그인한 계정(${ctx.user.name})이 전체 관리자가 됩니다.</p>
+        ${field({ id: 'secret', label: 'SESSION_SECRET', error,
+          input: (d) => textInput({ id: 'secret', type: 'password', autocomplete: 'off', required: true, error, describedBy: d }) })}
+        <button type="submit" class="btn">지정</button>
+      </form>
+    </div></section>`,
+  });
 }

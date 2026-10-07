@@ -3,7 +3,8 @@ import { loadConsent } from '../config.js';
 import { get } from '../lib/db.js';
 import { applyGrow, cancelOwnGrow, EnrollError, growApplyBlocker } from '../services/enrollments.js';
 import { getSession, groupByTheme, listPrograms } from '../services/programs.js';
-import { attendedFor, groupAttended, growSessionsFor, nextAction, upcomingFor } from '../services/schedule.js';
+import { attendedFor, groupAttended, growSessionsFor, nextAction, pendingWishCount, upcomingFor } from '../services/schedule.js';
+import { audiencesFor, listNotices } from '../services/notices.js';
 import { listConsents, parsePersonForm, updateProfile } from '../services/users.js';
 import * as views from '../views/me.js';
 import { deny, intParam, redirect, render, requireParticipant, requireSelected } from './helpers.js';
@@ -27,6 +28,8 @@ export function meRoutes(r) {
       upcoming,
       attended: groupAttended(await attendedFor(c.db, c.user.id)),
       counseling: await counseling(c),
+      pendingWishes: await pendingWishCount(c.db, c.user.id),
+      notices: await listNotices(c.db, { audiences: audiencesFor(c.user), limit: 3 }),
     });
   });
 
