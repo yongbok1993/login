@@ -12,9 +12,11 @@ public/                  Pages 정적 출력 디렉터리 (build output director
 functions/
   [[path]].js            Pages Functions 진입점(모든 경로) → src/app.js
 migrations/              D1 스키마(0001)·프로그램 기본 목록(0002)·주소/생년월일(0003)·PIN 로그인(0004)
+.github/workflows/ci.yml  PR·main 테스트
 src/
   app.js                 요청 처리(라우팅·세션·CSRF·보안 헤더)
   config.js, site.js     환경 변수 설정·기관 정보
+  db/                    배포 후 자동 마이그레이션(migrate.js, migrations.generated.js)
   lib/                   D1 도우미, 세션, PIN 해시, Web Crypto, 전화번호 정규화, 자동 이스케이프 템플릿, 라우터
   services/              등록·선정, 로그인 시도 제한, 프로그램·회차, Link 자동 배정, Grow 신청, 출석, 감사기록
   como/                  꼬모 연동 어댑터 인터페이스, 전화번호 매핑
@@ -33,11 +35,7 @@ test/                    자동 테스트
 (Pages 프로젝트에 `wrangler.toml`이 있으면 그 파일이 우선해 대시보드 바인딩을 쓸 수 없다).
 
 1. **D1 생성**: Workers & Pages → D1 → Create → 이름 `login-db`. 생성 후 database ID를 확인한다.
-2. **스키마 적용**(로컬 PC에서, `npx wrangler login` 후):
-   ```bash
-   npm install
-   npm run db:migrate:remote -- --id <database ID>
-   ```
+2. **스키마**: 따로 적용할 필요 없음. 배포된 앱이 첫 요청에서 `migrations/`를 자동 적용한다(아래 '배포 흐름').
 3. **Pages 프로젝트 → Settings → Build**
    | 항목 | 값 |
    |---|---|
@@ -88,6 +86,17 @@ test/                    자동 테스트
 | `COMO_APPLY_URL` | `https://cco-mho.pages.dev/` | 상담신청하기 이동 주소 |
 | `CONSENT_JSON` | - | 기관 확정 동의문 |
 | `SESSION_IDLE_DAYS` / `SESSION_MAX_DAYS` | 14 / 60 | 로그인 유지 기간 |
+
+## 배포 흐름 (자동)
+
+1. 변경은 브랜치 → PR로 올린다. GitHub Actions(`.github/workflows/ci.yml`)가 테스트(일반 + 로컬 D1)와 Functions 번들을 확인한다.
+2. PR을 `main`에 머지하면 Cloudflare Pages Git 연동이 자동 배포한다.
+3. 배포된 앱이 첫 요청에서 아직 적용되지 않은 D1 마이그레이션을 적용한다(`src/db/migrate.js`).
+   - wrangler와 같은 `d1_migrations` 테이블을 쓰므로 CLI(`npm run db:migrate:remote`)와 섞어 써도 중복 적용되지 않는다.
+   - 마이그레이션마다 기록과 함께 하나의 batch(트랜잭션)로 실행되고, 동시 요청이 있어도 한 번만 적용된다.
+   - 실패하면 해당 마이그레이션 전체가 되돌려지고, 화면에 "데이터베이스 준비 중 오류"가 표시된다.
+4. 마이그레이션을 추가할 때: `migrations/000N_설명.sql` 작성 → `npm run build:migrations` → 커밋.
+   기존 버전 코드가 잠시 함께 돌 수 있으므로, 가능하면 컬럼 추가 위주로 작성하고 삭제는 다음 배포로 미룬다.
 
 ## 로컬 개발
 

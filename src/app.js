@@ -1,4 +1,5 @@
 import { createComoAdapter } from './como/adapters.js';
+import { ensureMigrated } from './db/migrate.js';
 import { loadConfig } from './config.js';
 import { Router } from './lib/router.js';
 import { purgeExpired, Session } from './lib/session.js';
@@ -85,6 +86,12 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
         return plainError(500, `설정 오류: ${err.message}`);
       }
       if (!deps.db) return plainError(500, '설정 오류: D1 데이터베이스 바인딩(DB)이 없습니다.');
+      try {
+        await ensureMigrated(deps.db);
+      } catch (err) {
+        deps.logger.error(err);
+        return plainError(500, '데이터베이스 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+      }
 
       const url = new URL(request.url);
       const c = {

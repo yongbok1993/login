@@ -1,0 +1,31 @@
+# PR과 main 푸시마다 테스트를 실행한다. 배포는 Cloudflare Pages Git 연동이 main 푸시 때 자동으로 하고,
+# D1 마이그레이션은 배포된 앱이 첫 요청에서 적용한다(src/db/migrate.js). 비밀값이 필요 없다.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      - name: 기능 테스트
+        run: npm test
+      - name: 같은 테스트를 로컬 D1(workerd)에서
+        run: npm run test:d1
+      - name: Pages Functions 번들 확인
+        run: npx wrangler pages functions build --outdir /tmp/functions-build

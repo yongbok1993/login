@@ -6,7 +6,8 @@ import { nowIso } from '../src/lib/time.js';
 import { createSession, getProgramByCode } from '../src/services/programs.js';
 import { registerUser, setSelected } from '../src/services/users.js';
 import { all, get, run } from '../src/lib/db.js';
-import { createD1, migrationStatements } from './d1-shim.js';
+import { ensureMigrated } from '../src/db/migrate.js';
+import { createD1 } from './d1-shim.js';
 
 const quiet = { info() {}, warn() {}, error(e) { console.error(e); } };
 
@@ -16,9 +17,12 @@ export const testPinHash = () => hashPin(TEST_SECRET, TEST_PIN);
 
 export const CONSENT = { version: 'test-v1', isDraft: false, items: [{ key: 'privacy', title: '개인정보 수집·이용 동의', required: true, body: '' }] };
 
+export { openTestDb };
+
 export async function startApp({ como, cfg: overrides = {} } = {}) {
   const cfg = loadConfig({ APP_ENV: 'test' }, { consent: CONSENT, ...overrides });
   const { db, dispose } = await openTestDb();
+  await ensureMigrated(db);
   const adapter = como || createUnconfiguredAdapter();
   const app = createApp({ resolveDeps: () => ({ cfg, db, como: adapter, logger: quiet }) });
   return {
@@ -112,7 +116,6 @@ async function openTestDb() {
   fs.writeFileSync(configPath, `name = "login-test"\ncompatibility_date = "2025-09-01"\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "login-test"\ndatabase_id = "login-test"\n`);
   const proxy = await getPlatformProxy({ configPath, persist: { path: path.join(dir, 'state') } });
   const db = proxy.env.DB;
-  for (const sql of migrationStatements()) await db.prepare(sql).run();
   return { db, dispose: async () => { await proxy.dispose(); fs.rmSync(dir, { recursive: true, force: true }); } };
 }
 
