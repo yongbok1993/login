@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import { normalizePhone } from '../lib/phone.js';
 
 /**
@@ -40,7 +39,7 @@ export function createUnconfiguredAdapter() {
 
 /**
  * 개발용 모의 어댑터. 운영 환경에서는 설정 단계에서 차단된다.
- * 데이터 형식: { "accounts": [{ "externalId", "phone", "name"?, "completed", "total", "nextAt"? }] }
+ * 데이터는 COMO_MOCK_JSON 환경 변수(개발용 .dev.vars)로 넣는다. 형식: { "accounts": [{ "externalId", "phone", "name"?, "completed", "total", "nextAt"? }] }
  */
 export function createMockAdapter(data) {
   const accounts = (data.accounts || []).map((a) => ({ ...a, phone: normalizePhone(String(a.phone)) }));
@@ -64,9 +63,9 @@ export function createComoAdapter(cfg) {
     if (cfg.isProd) throw new Error('mock adapter is not allowed in production');
     let data = { accounts: [] };
     try {
-      data = JSON.parse(fs.readFileSync(cfg.comoMockFile, 'utf8'));
+      data = JSON.parse(cfg.comoMockJson);
     } catch {
-      // 모의 데이터 파일이 없으면 빈 목록
+      // 모의 데이터가 없으면 빈 목록
     }
     return createMockAdapter(data);
   }

@@ -1,0 +1,5 @@
+# 로컬 개발용 환경 변수 (.dev.vars로 복사). 운영 값은 Cloudflare Pages 설정에서 넣는다.
+APP_ENV=development
+# COMO_ADAPTER=mock
+# COMO_MOCK_JSON='{"accounts":[{"externalId":"mock-a1","phone":"01000000001","completed":3,"total":10}]}'
+# CONSENT_JSON='{"version":"...","items":[{"key":"privacy","title":"개인정보 수집·이용 동의","required":true,"body":"..."}]}'

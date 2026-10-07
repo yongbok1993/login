@@ -48,11 +48,11 @@ test('최초 등록: 인증 → 정보 입력 → 계정 연결, 같은 번호 �
   r = await c.post('/register/details', { name: '홍길동', region: '처인구', consent: 'privacy' });
   assert.equal(r.location, '/me');
 
-  const users = app.db.prepare('SELECT * FROM users').all();
+  const users = (await app.sql.all('SELECT * FROM users'));
   assert.equal(users.length, 1);
   assert.equal(users[0].phone, '01011112222');
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM registrations').get().n, 1);
-  const consent = app.db.prepare('SELECT * FROM consents').get();
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM registrations')).n, 1);
+  const consent = (await app.sql.get('SELECT * FROM consents'));
   assert.equal(consent.agreed, 1);
   assert.equal(consent.doc_version, 'test-v1');
 
@@ -64,11 +64,11 @@ test('최초 등록: 인증 → 정보 입력 → 계정 연결, 같은 번호 �
   // 다른 기기에서 같은 번호로 '참여 등록' → 로그인으로 처리, 새 계정 없음
   const c2 = app.client();
   await c2.get('/register');
-  app.db.prepare('UPDATE otp_codes SET created_at = ?').run(new Date(Date.now() - 120000).toISOString());
+  await app.sql.run('UPDATE otp_codes SET created_at = ?', new Date(Date.now() - 120000).toISOString());
   await c2.post('/register', { phone: '01011112222' });
   r = await c2.post('/verify', { code: c2.lastCode('01011112222') });
   assert.equal(r.location, '/me');
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM users').get().n, 1);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM users')).n, 1);
 });
 
 test('인증번호 입력 5회 실패 시 재발급 필요', async (t) => {
@@ -97,8 +97,8 @@ test('CSRF 토큰 없는 POST 거부', async (t) => {
 test('미선정 계정은 참여자 전용 기능(프로그램·Grow 신청·상담 링크)에 접근 불가', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  addParticipant(app.db, { phone: '01030000001' });
-  const sid = addSession(app.db, 'grow-craft');
+  await addParticipant(app.db, { phone: '01030000001' });
+  const sid = await addSession(app.db, 'grow-craft');
   const c = app.client();
   await c.login('01030000001');
   for (const path of ['/me/programs', '/me/open/counseling', '/me/counseling/apply', `/me/grow/${sid}`]) {
@@ -108,7 +108,7 @@ test('미선정 계정은 참여자 전용 기능(프로그램·Grow 신청·상
   }
   const r = await c.post(`/me/grow/${sid}`);
   assert.equal(r.status, 403);
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM enrollments').get().n, 0);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments')).n, 0);
   // 비로그인
   const anon = app.client();
   assert.equal((await anon.get('/me/counseling/apply')).location, '/login');
@@ -117,17 +117,17 @@ test('미선정 계정은 참여자 전용 기능(프로그램·Grow 신청·상
 test('Link: 선정 시 전체 자동 배정, 신청 버튼 없음, 재실행·새 회차에 중복 없음, 출석 아님', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  const s1 = addSession(app.db, 'link-cooking', { round_no: 1 });
-  addSession(app.db, 'link-outing', { round_no: 1 });
-  const uid = addParticipant(app.db, { phone: '01040000001', selected: true });
-  const count = () => app.db.prepare("SELECT COUNT(*) n FROM enrollments WHERE user_id = ? AND source = 'auto'").get(uid).n;
-  assert.equal(count(), 2);
-  autoAssignLink(app.db);
-  autoAssignLink(app.db, { userId: uid });
-  assert.equal(count(), 2);
-  addSession(app.db, 'link-kimjang', { round_no: 1 });
-  assert.equal(count(), 3);
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM attendance').get().n, 0);
+  const s1 = await addSession(app.db, 'link-cooking', { round_no: 1 });
+  await addSession(app.db, 'link-outing', { round_no: 1 });
+  const uid = await addParticipant(app.db, { phone: '01040000001', selected: true });
+  const count = async () => (await app.sql.get("SELECT COUNT(*) n FROM enrollments WHERE user_id = ? AND source = 'auto'", uid)).n;
+  assert.equal(await count(), 2);
+  await autoAssignLink(app.db);
+  await autoAssignLink(app.db, { userId: uid });
+  assert.equal(await count(), 2);
+  await addSession(app.db, 'link-kimjang', { round_no: 1 });
+  assert.equal(await count(), 3);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM attendance')).n, 0);
 
   const c = app.client();
   await c.login('01040000001');
@@ -140,16 +140,16 @@ test('Link: 선정 시 전체 자동 배정, 신청 버튼 없음, 재실행·�
   const me = await c.get('/me');
   const attended = me.text.slice(me.text.indexOf('참여한 프로그램'));
   assert.ok(!attended.includes('요리교실'));
-  assert.ok(app.db.prepare('SELECT 1 FROM enrollments WHERE session_id = ? AND user_id = ?').get(s1, uid));
+  assert.ok((await app.sql.get('SELECT 1 FROM enrollments WHERE session_id = ? AND user_id = ?', s1, uid)));
 });
 
 test('Grow: 확인 → 완료, 개인정보 재입력 없음, 중복·정원·마감 차단', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  const a = addParticipant(app.db, { name: '참여자가', phone: '01050000001', selected: true });
-  addParticipant(app.db, { name: '참여자나', phone: '01050000002', selected: true });
-  const sid = addSession(app.db, 'grow-career', { round_no: 1, capacity: 1 });
-  const closed = addSession(app.db, 'grow-craft', { round_no: 1, is_closed: 1 });
+  const a = await addParticipant(app.db, { name: '참여자가', phone: '01050000001', selected: true });
+  await addParticipant(app.db, { name: '참여자나', phone: '01050000002', selected: true });
+  const sid = await addSession(app.db, 'grow-career', { round_no: 1, capacity: 1 });
+  const closed = await addSession(app.db, 'grow-craft', { round_no: 1, is_closed: 1 });
 
   const c = app.client();
   await c.login('01050000001');
@@ -166,7 +166,7 @@ test('Grow: 확인 → 완료, 개인정보 재입력 없음, 중복·정원·�
   r = await c.post(`/me/grow/${sid}`);
   assert.equal(r.status, 409);
   assert.match(r.text, /이미 신청한 회차/);
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?').get(a).n, 1);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?', a)).n, 1);
 
   const c2 = app.client();
   await c2.login('01050000002');
@@ -180,14 +180,14 @@ test('Grow: 확인 → 완료, 개인정보 재입력 없음, 중복·정원·�
   assert.match(r.text, /정원 마감/);
 
   // Link 회차는 Grow 신청 경로로 신청할 수 없다
-  const link = addSession(app.db, 'link-cooking');
+  const link = await addSession(app.db, 'link-cooking');
   assert.equal((await c2.post(`/me/grow/${link}`)).status, 404);
 });
 
 test('상담신청하기: 선정 참여자의 O 마음 → 전문 심리상담에만, 서버 확인 후 꼬모로 이동(번호 미전달)', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  addParticipant(app.db, { phone: '01060000001', selected: true });
+  await addParticipant(app.db, { phone: '01060000001', selected: true });
   const c = app.client();
   await c.login('01060000001');
   const status = await c.get('/me');
@@ -207,7 +207,7 @@ test('상담신청하기: 선정 참여자의 O 마음 → 전문 심리상담�
 test('꼬모 미연결: 연동 확인 필요만 표시, 가짜 회차 없음', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  addParticipant(app.db, { phone: '01070000001', selected: true });
+  await addParticipant(app.db, { phone: '01070000001', selected: true });
   const c = app.client();
   await c.login('01070000001');
   for (const path of ['/me', '/me/open/counseling']) {
@@ -220,13 +220,13 @@ test('꼬모 미연결: 연동 확인 필요만 표시, 가짜 회차 없음', a
 test('나의 현황: 네 영역, 미정 값은 채우지 않음, 출석 기록만 참여 완료로', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  const uid = addParticipant(app.db, { phone: '01080000001', selected: true });
-  addSession(app.db, 'link-cooking', { round_no: 2 });
-  const dated = addSession(app.db, 'link-seasonal', { round_no: 1, date: '2099-07-01', start_time: '10:00', place: '본관' });
-  const past = addSession(app.db, 'link-outing', { round_no: 1, date: '2000-04-01' });
-  app.db.prepare("INSERT INTO attendance (enrollment_id, status, recorded_at) SELECT id, 'attended', '2000-04-01T00:00:00Z' FROM enrollments WHERE session_id = ?").run(past);
-  const internal = addSession(app.db, 'in-case-conference', { date: '2099-02-01' });
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM enrollments WHERE session_id = ?').get(internal).n, 0);
+  const uid = await addParticipant(app.db, { phone: '01080000001', selected: true });
+  await addSession(app.db, 'link-cooking', { round_no: 2 });
+  const dated = await addSession(app.db, 'link-seasonal', { round_no: 1, date: '2099-07-01', start_time: '10:00', place: '본관' });
+  const past = await addSession(app.db, 'link-outing', { round_no: 1, date: '2000-04-01' });
+  (await app.sql.run("INSERT INTO attendance (enrollment_id, status, recorded_at) SELECT id, 'attended', '2000-04-01T00:00:00Z' FROM enrollments WHERE session_id = ?", past));
+  const internal = await addSession(app.db, 'in-case-conference', { date: '2099-02-01' });
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments WHERE session_id = ?', internal)).n, 0);
 
   const c = app.client();
   await c.login('01080000001');
@@ -247,9 +247,9 @@ test('나의 현황: 네 영역, 미정 값은 채우지 않음, 출석 기록�
 test('다른 사용자의 정보·관리자 화면 접근 불가, 운영 담당은 번호 가림', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  const a = addParticipant(app.db, { name: '가참여자', phone: '01090000001', selected: true });
-  const b = addParticipant(app.db, { name: '나참여자', phone: '01090000002', selected: true });
-  const sid = addSession(app.db, 'link-cooking');
+  const a = await addParticipant(app.db, { name: '가참여자', phone: '01090000001', selected: true });
+  const b = await addParticipant(app.db, { name: '나참여자', phone: '01090000002', selected: true });
+  const sid = await addSession(app.db, 'link-cooking');
   const c = app.client();
   await c.login('01090000001');
   const me = await c.get('/me/profile');
@@ -257,12 +257,12 @@ test('다른 사용자의 정보·관리자 화면 접근 불가, 운영 담당�
   for (const path of ['/admin', `/admin/participants/${b}`, '/admin/como', `/admin/sessions/${sid}`]) {
     assert.equal((await c.get(path)).status, 403, path);
   }
-  const bEnrollment = app.db.prepare('SELECT id FROM enrollments WHERE user_id = ?').get(b).id;
+  const bEnrollment = (await app.sql.get('SELECT id FROM enrollments WHERE user_id = ?', b)).id;
   assert.equal((await c.post(`/admin/enrollments/${bEnrollment}/attendance`, { status: 'attended' })).status, 403);
   assert.equal((await c.post(`/me/grow/enrollments/${bEnrollment}/cancel`)).status, 303);
-  assert.equal(app.db.prepare('SELECT status FROM enrollments WHERE id = ?').get(bEnrollment).status, 'active');
+  assert.equal((await app.sql.get('SELECT status FROM enrollments WHERE id = ?', bEnrollment)).status, 'active');
 
-  addManager(app.db, '01099990001', 'staff');
+  await addManager(app.db, '01099990001', 'staff');
   const s = app.client();
   await s.login('01099990001');
   assert.equal((await s.get('/admin/participants')).status, 403);
@@ -277,26 +277,26 @@ test('다른 사용자의 정보·관리자 화면 접근 불가, 운영 담당�
 test('관리자: 선정 → Link 배정, 회차 추가, 출석 기록 → 참여한 프로그램 반영, 감사기록', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  addSession(app.db, 'link-cooking', { round_no: 1 });
-  const uid = addParticipant(app.db, { name: '선정대상', phone: '01011110001' });
-  addManager(app.db);
+  await addSession(app.db, 'link-cooking', { round_no: 1 });
+  const uid = await addParticipant(app.db, { name: '선정대상', phone: '01011110001' });
+  await addManager(app.db);
   const m = app.client();
   await m.login('01099990000');
   let r = await m.get('/admin/participants?status=received');
   assert.match(r.text, /선정대상/);
   r = await m.post(`/admin/participants/${uid}/select`, { selected: '1' });
   assert.equal(r.status, 303);
-  assert.equal(app.db.prepare('SELECT is_selected FROM users WHERE id = ?').get(uid).is_selected, 1);
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?').get(uid).n, 1);
+  assert.equal((await app.sql.get('SELECT is_selected FROM users WHERE id = ?', uid)).is_selected, 1);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?', uid)).n, 1);
 
-  const prog = app.db.prepare("SELECT id FROM programs WHERE code = 'link-seasonal'").get().id;
+  const prog = (await app.sql.get("SELECT id FROM programs WHERE code = 'link-seasonal'")).id;
   r = await m.post(`/admin/programs/${prog}/sessions`, { round_no: '1', date: '2027-02-30', capacity: 'x' });
   assert.equal(r.status, 422);
   r = await m.post(`/admin/programs/${prog}/sessions`, { round_no: '1', date: '2027-07-15', start_time: '10:00', place: '' });
   assert.equal(r.status, 303);
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?').get(uid).n, 2);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?', uid)).n, 2);
 
-  const e = app.db.prepare('SELECT id FROM enrollments WHERE user_id = ? ORDER BY id LIMIT 1').get(uid).id;
+  const e = (await app.sql.get('SELECT id FROM enrollments WHERE user_id = ? ORDER BY id LIMIT 1', uid)).id;
   r = await m.post(`/admin/enrollments/${e}/attendance`, { status: 'attended' });
   assert.equal(r.status, 303);
   const p = app.client();
@@ -307,30 +307,76 @@ test('관리자: 선정 → Link 배정, 회차 추가, 출석 기록 → 참여
   // 선정 해제 → 예정 배정 취소, 참여자 전용 기능 차단
   r = await m.post(`/admin/participants/${uid}/select`, { selected: '0' });
   assert.equal((await p.get('/me/programs')).status, 403);
-  assert.equal(app.db.prepare("SELECT COUNT(*) n FROM enrollments WHERE user_id = ? AND status = 'active'").get(uid).n, 1);
+  assert.equal((await app.sql.get("SELECT COUNT(*) n FROM enrollments WHERE user_id = ? AND status = 'active'", uid)).n, 1);
   // 재선정 → 복원, 중복 없음
   await m.post(`/admin/participants/${uid}/select`, { selected: '1' });
-  assert.equal(app.db.prepare("SELECT COUNT(*) n FROM enrollments WHERE user_id = ? AND status = 'active'").get(uid).n, 2);
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?').get(uid).n, 2);
+  assert.equal((await app.sql.get("SELECT COUNT(*) n FROM enrollments WHERE user_id = ? AND status = 'active'", uid)).n, 2);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?', uid)).n, 2);
 
-  const actions = app.db.prepare('SELECT action FROM audit_log').all().map((x) => x.action);
+  const actions = (await app.sql.all('SELECT action FROM audit_log')).map((x) => x.action);
   for (const a of ['participant.select', 'session.create', 'attendance.record', 'participant.release']) assert.ok(actions.includes(a), a);
 });
 
 test('관리자 배정: internal(통합사례회의) 회차에는 배정 불가', async (t) => {
   const app = await startApp();
   t.after(app.close);
-  const uid = addParticipant(app.db, { phone: '01012120001', selected: true });
-  const sid = addSession(app.db, 'in-case-conference');
-  const campaign = addSession(app.db, 'in-campaign', { date: '2099-10-01' });
-  addManager(app.db);
+  const uid = await addParticipant(app.db, { phone: '01012120001', selected: true });
+  const sid = await addSession(app.db, 'in-case-conference');
+  const campaign = await addSession(app.db, 'in-campaign', { date: '2099-10-01' });
+  await addManager(app.db);
   const m = app.client();
   await m.login('01099990000');
   await m.post(`/admin/sessions/${sid}/assign`, { user_id: String(uid) });
-  assert.equal(app.db.prepare('SELECT COUNT(*) n FROM enrollments WHERE session_id = ?').get(sid).n, 0);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments WHERE session_id = ?', sid)).n, 0);
   // 캠페인은 실제 배정한 참여자의 일정에만
   await m.post(`/admin/sessions/${campaign}/assign`, { user_id: String(uid) });
   const p = app.client();
   await p.login('01012120001');
   assert.match((await p.get('/me')).text, /지역사회 인식개선 캠페인/);
+});
+
+test('운영 모드: 개발 표시 없음, 동의문 없으면 등록 닫힘, 문자 미설정이면 인증번호 미발송, Secure 쿠키', async (t) => {
+  const { createApp } = await import('../src/app.js');
+  const { createD1 } = await import('./d1-shim.js');
+  const db = createD1();
+  t.after(() => db.sqlite.close());
+  const env = { SESSION_SECRET: 'x'.repeat(40), DB: db };
+  const app = createApp();
+  const fetchPage = (path, init) => app.fetch(new Request(`https://login-cpn.pages.dev${path}`, init), env, {});
+
+  let r = await fetchPage('/');
+  let text = await r.text();
+  assert.equal(r.status, 200);
+  assert.ok(!text.includes('개발 환경'));
+  assert.ok(text.includes('요리교실'));
+  assert.equal(r.headers.get('set-cookie'), null, '공개 홈은 세션을 만들지 않음');
+
+  r = await fetchPage('/register');
+  assert.match(await r.text(), /등록 준비 중입니다/);
+
+  r = await fetchPage('/login');
+  const cookie = r.headers.get('set-cookie');
+  assert.match(cookie, /Secure/);
+  const csrf = (await r.text()).match(/name="_csrf" value="([^"]+)"/)[1];
+  r = await fetchPage('/login', {
+    method: 'POST',
+    headers: { cookie: cookie.split(';')[0], 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ _csrf: csrf, phone: '01012345678' }).toString(),
+  });
+  text = await r.text();
+  assert.equal(r.status, 422);
+  assert.match(text, /인증 문자를 보낼 수 없습니다/);
+  assert.equal((await db.prepare('SELECT COUNT(*) n FROM otp_codes').first()).n, 0);
+});
+
+test('운영 모드 설정 오류: SESSION_SECRET·DB 바인딩 누락을 알려 준다', async () => {
+  const { createApp } = await import('../src/app.js');
+  const { createD1 } = await import('./d1-shim.js');
+  const app = createApp();
+  let r = await app.fetch(new Request('https://login-cpn.pages.dev/'), { DB: createD1() }, {});
+  assert.equal(r.status, 500);
+  assert.match(await r.text(), /SESSION_SECRET/);
+  r = await app.fetch(new Request('https://login-cpn.pages.dev/'), { SESSION_SECRET: 'x'.repeat(40) }, {});
+  assert.equal(r.status, 500);
+  assert.match(await r.text(), /D1 데이터베이스 바인딩\(DB\)/);
 });
