@@ -14,7 +14,6 @@ export function programCards(groups) {
         ${stamp('L', '관계')}
         <h3>관계</h3><span class="en">LINK</span>
         <ul>${programItems(groups.L)}</ul>
-        <span class="mode">선정 시 전체 자동 참여</span>
       </article>
       <article class="log-card o">
         ${stamp('O', '마음')}
@@ -27,11 +26,7 @@ export function programCards(groups) {
         <ul>${programItems(groups.G)}</ul>
         <span class="mode">희망 활동 직접 선택</span>
       </article>
-    </div>
-    ${groups.IN.length ? html`<div class="network">
-      <h3>IN · 지역사회 네트워크</h3>
-      <ul>${groups.IN.map((p) => html`<li>${p.name} — ${p.schedule_label}${p.detail ? html` <small>${p.detail}</small>` : ''}</li>`)}</ul>
-    </div>` : ''}`;
+    </div>`;
 }
 
 export function homePage(ctx, groups) {

@@ -15,11 +15,12 @@ test('공개 홈: L/O/G 목록, 꼬모·상담 버튼·참여 절차·시안 설
   const r = await app.client().get('/');
   assert.equal(r.status, 200);
   for (const name of ['요리교실', '절기행사', '나들이', '김장나눔활동', '개별 사례관리', '정서지원 키트', '전문 심리상담',
-    '만남 및 교류활동', '직업·적성 체험', '공예 체험', '의사소통 교육', '통합사례회의', '지역사회 인식개선 캠페인']) {
+    '만남 및 교류활동', '직업·적성 체험', '공예 체험', '의사소통 교육']) {
     assert.ok(r.text.includes(name), name);
   }
   assert.ok(r.text.includes('참여 등록'));
-  for (const bad of ['cco-mho', '상담신청하기', '참여 절차', '디자인 기준', '로그인 화면 예시', '절기문화활동', '원예', '나의 강점 찾기',
+  for (const bad of ['cco-mho', '상담신청하기', '참여 절차', '선정 시 전체 자동 참여', '지역사회 네트워크', '통합사례회의',
+    '인식개선 캠페인', '디자인 기준', '로그인 화면 예시', '절기문화활동', '원예', '나의 강점 찾기',
     '<img', 'cloudflareinsights', ...BANNED]) {
     assert.ok(!r.text.includes(bad), `공개 홈에 "${bad}" 노출`);
   }
@@ -42,15 +43,19 @@ test('최초 등록: 인증 → 정보 입력 → 계정 연결, 같은 번호 �
 
   r = await c.get('/register/details');
   assert.match(r.text, /인증 완료/);
-  r = await c.post('/register/details', { name: '', region: '' });
+  r = await c.post('/register/details', { name: '', address: '', birth_date: '19991399' });
   assert.equal(r.status, 422);
   assert.match(r.text, /필수 항목에 동의해 주세요/);
-  r = await c.post('/register/details', { name: '홍길동', region: '처인구', consent: 'privacy' });
+  assert.match(r.text, /생년월일을 확인해 주세요/);
+  assert.match(r.text, /주소를 입력해 주세요/);
+  r = await c.post('/register/details', { name: '홍길동', address: '경기도 용인시 처인구 테스트로 1', birth_date: '1970.3.5', consent: 'privacy' });
   assert.equal(r.location, '/me');
 
   const users = (await app.sql.all('SELECT * FROM users'));
   assert.equal(users.length, 1);
   assert.equal(users[0].phone, '01011112222');
+  assert.equal(users[0].address, '경기도 용인시 처인구 테스트로 1');
+  assert.equal(users[0].birth_date, '1970-03-05');
   assert.equal((await app.sql.get('SELECT COUNT(*) n FROM registrations')).n, 1);
   const consent = (await app.sql.get('SELECT * FROM consents'));
   assert.equal(consent.agreed, 1);
@@ -158,7 +163,7 @@ test('Grow: 확인 → 완료, 개인정보 재입력 없음, 중복·정원·�
   assert.match(r.text, /신청 확인/);
   assert.match(r.text, /참여자가/);
   assert.match(r.text, /일정 미정/);
-  assert.ok(!/name="(name|phone|region|code)"/.test(r.text), '개인정보·인증 입력란이 없어야 함');
+  assert.ok(!/name="(name|phone|address|birth_date|code)"/.test(r.text), '개인정보·인증 입력란이 없어야 함');
   r = await c.post(`/me/grow/${sid}`);
   assert.equal(r.location, `/me/grow/${sid}/done`);
   r = await c.get(r.location);
@@ -335,7 +340,7 @@ test('관리자 배정: internal(통합사례회의) 회차에는 배정 불가'
   assert.match((await p.get('/me')).text, /지역사회 인식개선 캠페인/);
 });
 
-test('운영 모드: 개발 표시 없음, 동의문 없으면 등록 닫힘, 문자 미설정이면 인증번호 미발송, Secure 쿠키', async (t) => {
+test('운영 모드: 개발 표시 없음, 등록 화면 열림, 문자 미설정이면 인증번호 미발송, Secure 쿠키', async (t) => {
   const { createApp } = await import('../src/app.js');
   const { createD1 } = await import('./d1-shim.js');
   const db = createD1();
@@ -352,7 +357,7 @@ test('운영 모드: 개발 표시 없음, 동의문 없으면 등록 닫힘, �
   assert.equal(r.headers.get('set-cookie'), null, '공개 홈은 세션을 만들지 않음');
 
   r = await fetchPage('/register');
-  assert.match(await r.text(), /등록 준비 중입니다/);
+  assert.match(await r.text(), /인증번호 받기/);
 
   r = await fetchPage('/login');
   const cookie = r.headers.get('set-cookie');
@@ -379,4 +384,51 @@ test('운영 모드 설정 오류: SESSION_SECRET·DB 바인딩 누락을 알려
   r = await app.fetch(new Request('https://login-cpn.pages.dev/'), { SESSION_SECRET: 'x'.repeat(40) }, {});
   assert.equal(r.status, 500);
   assert.match(await r.text(), /D1 데이터베이스 바인딩\(DB\)/);
+});
+
+test('동의문 미설정이면 필수 동의 1개를 받고 문안 버전을 미확정으로 기록', async (t) => {
+  const { loadConsent } = await import('../src/config.js');
+  const app = await startApp({ cfg: { consent: undefined } });
+  t.after(app.close);
+  assert.equal(loadConsent(app.cfg).version, '미확정');
+  const c = app.client();
+  await c.get('/register');
+  await c.post('/register', { phone: '01013130001' });
+  await c.post('/verify', { code: c.lastCode('01013130001') });
+  let r = await c.get('/register/details');
+  assert.match(r.text, /수집 항목: 이름, 주소, 생년월일, 휴대전화 번호/);
+  r = await c.post('/register/details', { name: '가', address: '주소', birth_date: '19800101' });
+  assert.equal(r.status, 422);
+  r = await c.post('/register/details', { name: '가', address: '주소', birth_date: '19800101', consent: 'privacy' });
+  assert.equal(r.location, '/me');
+  assert.equal((await app.sql.get('SELECT doc_version FROM consents')).doc_version, '미확정');
+});
+
+test('내 정보: 이름·주소·생년월일 수정', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const uid = await addParticipant(app.db, { phone: '01014140001' });
+  const c = app.client();
+  await c.login('01014140001');
+  let r = await c.get('/me/profile');
+  assert.match(r.text, /value="19700101"/);
+  r = await c.post('/me/profile', { name: '새이름', address: '새 주소', birth_date: '2999-01-01' });
+  assert.equal(r.status, 422);
+  r = await c.post('/me/profile', { name: '새이름', address: '새 주소', birth_date: '1965-12-31' });
+  assert.equal(r.status, 303);
+  const u = await app.sql.get('SELECT name, address, birth_date FROM users WHERE id = ?', uid);
+  assert.deepEqual({ ...u }, { name: '새이름', address: '새 주소', birth_date: '1965-12-31' });
+});
+
+test('인증번호 전체 일일 발송 상한', async (t) => {
+  const app = await startApp({ cfg: { smsDailyLimit: 2 } });
+  t.after(app.close);
+  for (const [i, phone] of ['01015150001', '01015150002', '01015150003'].entries()) {
+    const c = app.client();
+    await c.get('/login');
+    const r = await c.post('/login', { phone });
+    if (i < 2) assert.equal(r.status, 303);
+    else assert.match(r.text, /지금은 인증번호를 보낼 수 없습니다/);
+  }
+  assert.equal(app.sent.length, 2);
 });

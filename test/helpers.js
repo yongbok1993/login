@@ -88,7 +88,7 @@ export class Client {
 }
 
 export function addParticipant(db, { name = '참여자', phone, selected = false }) {
-  return registerUser(db, { name, phone, region: '지역', consent: CONSENT, agreedKeys: ['privacy'] })
+  return registerUser(db, { name, phone, address: '주소', birthDate: '1970-01-01', consent: CONSENT, agreedKeys: ['privacy'] })
     .then(async (id) => {
       if (selected) await setSelected(db, null, id, true);
       return id;

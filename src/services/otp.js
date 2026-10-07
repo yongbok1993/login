@@ -13,7 +13,7 @@ function hashCode(secret, phone, purpose, code) {
 }
 
 /** 인증번호 발급. 발송 제한을 넘으면 { ok:false, reason:'rate_limited' } */
-export async function issueOtp(db, secret, { phone, purpose, ip }, now = new Date()) {
+export async function issueOtp(db, secret, { phone, purpose, ip, dailyLimit = Infinity }, now = new Date()) {
   const t = now.getTime();
   const hourAgo = new Date(t - 3600 * 1000).toISOString();
   const last = await get(db, 'SELECT created_at FROM otp_codes WHERE phone = ? ORDER BY id DESC LIMIT 1', phone);
@@ -23,6 +23,11 @@ export async function issueOtp(db, secret, { phone, purpose, ip }, now = new Dat
   if (ip) {
     const byIp = (await get(db, 'SELECT COUNT(*) n FROM otp_codes WHERE ip = ? AND created_at > ?', ip, hourAgo)).n;
     if (byIp >= IP_HOURLY_LIMIT) return { ok: false, reason: 'rate_limited' };
+  }
+  // 전체 일일 발송 상한(문자 비용·대량 발송 남용 방지)
+  const dayAgo = new Date(t - 24 * 3600 * 1000).toISOString();
+  if ((await get(db, 'SELECT COUNT(*) n FROM otp_codes WHERE created_at > ?', dayAgo)).n >= dailyLimit) {
+    return { ok: false, reason: 'daily_limit' };
   }
   const code = numericCode(6);
   const created = nowIso(now);

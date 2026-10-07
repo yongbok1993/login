@@ -216,14 +216,17 @@ export function profilePage(ctx, { user, consents, consentDoc, values, errors = 
       ${field({ id: 'name', label: '이름', error: errors.name,
         input: (d) => textInput({ id: 'name', value: v.name, autocomplete: 'name', maxlength: 40, required: true,
           error: errors.name, describedBy: d }) })}
-      ${field({ id: 'region', label: '거주 지역', error: errors.region,
-        input: (d) => textInput({ id: 'region', value: v.region, autocomplete: 'address-level2', maxlength: 60,
-          required: true, error: errors.region, describedBy: d }) })}
+      ${field({ id: 'address', label: '주소', error: errors.address,
+        input: (d) => textInput({ id: 'address', value: v.address, autocomplete: 'street-address', maxlength: 200,
+          required: true, error: errors.address, describedBy: d }) })}
+      ${field({ id: 'birth_date', label: '생년월일', error: errors.birth_date, hint: '예: 19700101',
+        input: (d) => textInput({ id: 'birth_date', value: v.birth_date_input ?? (v.birth_date || '').replace(/-/g, ''),
+          autocomplete: 'bday', inputmode: 'numeric', maxlength: 10, required: true, error: errors.birth_date, describedBy: d }) })}
       <button type="submit" class="btn">저장</button>
     </form>
 
     <div class="card">
-      <h2 class="card-title">휴대전화 번호</h2>
+      <h2 class="card-title">연락처</h2>
       <p>${formatPhone(user.phone)}</p>
       <p class="actions"><a class="btn ghost" href="/me/phone">번호 변경</a></p>
     </div>

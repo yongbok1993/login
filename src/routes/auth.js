@@ -1,8 +1,8 @@
 import { loadConsent } from '../config.js';
 import { normalizePhone } from '../lib/phone.js';
 import { invalidateOtp, issueOtp, verifyOtp } from '../services/otp.js';
-import { changePhone, findUserByPhone, registerUser } from '../services/users.js';
-import { codeForm, phoneForm, registerDetailsForm, registrationClosed } from '../views/auth.js';
+import { changePhone, findUserByPhone, parsePersonForm, registerUser } from '../services/users.js';
+import { codeForm, phoneForm, registerDetailsForm } from '../views/auth.js';
 import { field, fieldList, redirect, render, requireLogin } from './helpers.js';
 
 const VERIFIED_PHONE_TTL_MS = 15 * 60 * 1000;
@@ -30,8 +30,11 @@ export function authRoutes(r) {
     if (!phone) return fail('휴대전화 번호를 확인해 주세요.');
     if (entry === 'change' && phone === c.user.phone) return fail('현재 번호와 같습니다.');
     if (!sms.configured) return fail('인증 문자를 보낼 수 없습니다. 기관에 문의해 주세요.');
-    const issued = await issueOtp(db, cfg.sessionSecret, { phone, purpose, ip: c.ip });
-    if (!issued.ok) return fail('잠시 후 다시 시도해 주세요.');
+    const issued = await issueOtp(db, cfg.sessionSecret, { phone, purpose, ip: c.ip, dailyLimit: cfg.smsDailyLimit });
+    if (!issued.ok) {
+      if (issued.reason === 'daily_limit') c.logger.warn('인증번호 일일 발송 상한 도달');
+      return fail(issued.reason === 'daily_limit' ? '지금은 인증번호를 보낼 수 없습니다. 기관에 문의해 주세요.' : '잠시 후 다시 시도해 주세요.');
+    }
     const sent = await sms.send(phone, `[로그人] 인증번호 ${issued.code}`);
     if (!sent.ok) {
       await invalidateOtp(db, issued.id);
@@ -61,13 +64,9 @@ export function authRoutes(r) {
   // ── 최초 등록 ──
   r.get('/register', (c) => {
     if (c.user) return redirect(c, afterLoginPath(c.user), 302);
-    if (!loadConsent(c.cfg)) return render(c, registrationClosed, undefined, 200, { session: false });
     return render(c, phoneForm, { title: '참여 등록', action: '/register' });
   });
-  r.post('/register', (c) => {
-    if (!loadConsent(c.cfg)) return render(c, registrationClosed, undefined, 200, { session: false });
-    return sendCode(c, { entry: 'register', purpose: 'auth', formAction: '/register' });
-  });
+  r.post('/register', (c) => sendCode(c, { entry: 'register', purpose: 'auth', formAction: '/register' }));
 
   // ── 인증번호 확인 (로그인·등록 공통) ──
   r.get('/verify', (c) => {
@@ -95,7 +94,6 @@ export function authRoutes(r) {
 
   r.get('/register/details', (c) => {
     const consent = loadConsent(c.cfg);
-    if (!consent) return render(c, registrationClosed, undefined, 200, { session: false });
     const phone = verifiedPhone(c);
     if (!phone) return redirect(c, '/register', 302);
     return render(c, registerDetailsForm, { phone, consent });
@@ -103,20 +101,17 @@ export function authRoutes(r) {
 
   r.post('/register/details', async (c) => {
     const consent = loadConsent(c.cfg);
-    if (!consent) return render(c, registrationClosed, undefined, 200, { session: false });
     const phone = verifiedPhone(c);
     if (!phone) return redirect(c, '/register');
-    const name = field(c, 'name').trim();
-    const region = field(c, 'region').trim();
+    const { value, errors } = parsePersonForm(c.body);
     const agreed = fieldList(c, 'consent');
-    const errors = {};
-    if (!name || name.length > 40) errors.name = '이름을 입력해 주세요.';
-    if (!region || region.length > 60) errors.region = '거주 지역을 입력해 주세요.';
     if (consent.items.some((i) => i.required && !agreed.includes(i.key))) errors.consent = '필수 항목에 동의해 주세요.';
     if (Object.keys(errors).length) {
-      return render(c, registerDetailsForm, { phone, consent, values: { name, region, consent: agreed }, errors }, 422);
+      return render(c, registerDetailsForm, { phone, consent, values: { ...value, consent: agreed }, errors }, 422);
     }
-    const userId = await registerUser(c.db, { name, phone, region, consent, agreedKeys: agreed });
+    const userId = await registerUser(c.db, {
+      name: value.name, phone, address: value.address, birthDate: value.birth_date, consent, agreedKeys: agreed,
+    });
     if (!userId) {
       await c.session.regenerate(null);
       await c.session.flash('info', '이미 등록된 번호입니다. 로그인해 주세요.');

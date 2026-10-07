@@ -53,18 +53,21 @@ export function registerDetailsForm(ctx, { phone, values = {}, errors = {}, cons
     <form method="post" action="/register/details" class="form card" novalidate>
       ${csrfField(ctx)}
       <div class="field">
-        <span class="label">휴대전화 번호</span>
+        <span class="label">연락처</span>
         <p class="readonly">${maskPhone(phone)} <span class="chip">인증 완료</span></p>
       </div>
       ${field({ id: 'name', label: '이름', error: errors.name,
         input: (d) => textInput({ id: 'name', value: values.name, autocomplete: 'name', maxlength: 40, required: true,
           error: errors.name, describedBy: d }) })}
-      ${field({ id: 'region', label: '거주 지역', error: errors.region, hint: '예: 시·구·동',
-        input: (d) => textInput({ id: 'region', value: values.region, autocomplete: 'address-level2', maxlength: 60,
-          required: true, error: errors.region, describedBy: d }) })}
+      ${field({ id: 'address', label: '주소', error: errors.address,
+        input: (d) => textInput({ id: 'address', value: values.address, autocomplete: 'street-address', maxlength: 200,
+          required: true, error: errors.address, describedBy: d }) })}
+      ${field({ id: 'birth_date', label: '생년월일', error: errors.birth_date, hint: '예: 19700101',
+        input: (d) => textInput({ id: 'birth_date', value: values.birth_date_input, autocomplete: 'bday', inputmode: 'numeric',
+          maxlength: 10, required: true, error: errors.birth_date, describedBy: d }) })}
       <fieldset class="consents${errors.consent ? ' has-error' : ''}" id="consent">
         <legend>동의</legend>
-        ${consent.isDraft ? html`<p class="dev-note" role="note">개발용 임시 항목 — 기관 확정 동의문으로 교체 필요</p>` : ''}
+        ${consent.isDraft && ctx.devNotice ? html`<p class="dev-note" role="note">기관 확정 동의문(CONSENT_JSON) 미설정</p>` : ''}
         ${consent.items.map((item) => html`
           <div class="consent-item">
             ${item.body ? html`<details><summary>${item.title} 내용 보기</summary><div class="consent-body">${item.body}</div></details>` : ''}
@@ -78,8 +81,4 @@ export function registerDetailsForm(ctx, { phone, values = {}, errors = {}, cons
       </fieldset>
       <button type="submit" class="btn">등록하기</button>
     </form>`);
-}
-
-export function registrationClosed(ctx) {
-  return page(ctx, '참여 등록', html`<p class="card">등록 준비 중입니다.</p>`);
 }

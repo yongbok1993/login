@@ -65,10 +65,11 @@ export function participantsPage(ctx, { rows, status }) {
       </select>
       <button type="submit" class="btn small ghost">보기</button>
     </form>
-    ${table(['이름', '전화번호', '거주 지역', '등록일', '상태', '꼬모'], rows.map((u) => html`<tr>
+    ${table(['이름', '연락처', '생년월일', '주소', '등록일', '상태', '꼬모'], rows.map((u) => html`<tr>
       <td><a href="/admin/participants/${u.id}">${u.name}</a></td>
       <td>${formatPhone(u.phone)}</td>
-      <td>${u.region}</td>
+      <td>${formatDate(u.birth_date)}</td>
+      <td>${u.address}</td>
       <td>${formatDateTime(u.registered_at)}</td>
       <td>${INTERNAL_STATUS[u.internal_status]}</td>
       <td>${u.como_status ? LINK_STATUS[u.como_status] : '미확인'}</td>
@@ -82,8 +83,9 @@ export function participantPage(ctx, { user, registration, consents, enrollments
     <h1 class="page-title">${user.name}</h1>
     <div class="card">
       <dl class="summary">
-        <dt>전화번호</dt><dd>${formatPhone(user.phone)}</dd>
-        <dt>거주 지역</dt><dd>${user.region}</dd>
+        <dt>연락처</dt><dd>${formatPhone(user.phone)}</dd>
+        <dt>생년월일</dt><dd>${formatDate(user.birth_date)}</dd>
+        <dt>주소</dt><dd>${user.address}</dd>
         <dt>등록일</dt><dd>${formatDateTime(registration.registered_at)}</dd>
         <dt>상태</dt><dd>${INTERNAL_STATUS[registration.internal_status]}</dd>
       </dl>

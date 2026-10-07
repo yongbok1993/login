@@ -20,11 +20,11 @@ export async function seed(db) {
   if ((await get(db, 'SELECT COUNT(*) n FROM users')).n > 0) throw new Error('이미 사용자가 있습니다. 로컬 DB(.wrangler/state)를 지우고 다시 실행해 주세요.');
   const consent = { version: 'dev-draft', items: [{ key: 'privacy', title: '개인정보 수집·이용 동의', required: true }] };
   const now = nowIso();
-  await run(db, `INSERT INTO users (name, phone, phone_verified_at, region, role, created_at, updated_at)
-    VALUES ('테스트관리자', '01000000000', ?, '', 'manager', ?, ?)`, now, now, now);
+  await run(db, `INSERT INTO users (name, phone, phone_verified_at, role, created_at, updated_at)
+    VALUES ('테스트관리자', '01000000000', ?, 'manager', ?, ?)`, now, now, now);
   const users = [];
   for (const i of [1, 2, 3, 4]) {
-    users.push(await registerUser(db, { name: `테스트참여자${i}`, phone: `0100000000${i}`, region: '테스트 지역', consent, agreedKeys: ['privacy'] }));
+    users.push(await registerUser(db, { name: `테스트참여자${i}`, phone: `0100000000${i}`, address: '테스트 주소', birthDate: '1970-01-01', consent, agreedKeys: ['privacy'] }));
   }
   const sessions = [
     ['link-cooking', { round_no: 1, date: '2027-02-10', start_time: '10:00', end_time: '12:00', place: '테스트 장소' }],

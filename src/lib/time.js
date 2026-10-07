@@ -47,3 +47,17 @@ export function formatTimeRange(start, end) {
   if (!start) return '';
   return end ? `${start}~${end}` : start;
 }
+
+/**
+ * 생년월일 입력 정규화: 19700101, 1970-01-01, 1970.1.1, 1970 01 01 → 1970-01-01.
+ * 실제로 없는 날짜, 1900년 이전, 오늘 이후는 null.
+ */
+export function parseBirthDate(input, now = new Date()) {
+  if (typeof input !== 'string') return null;
+  const s = input.trim();
+  let m = /^(\d{4})(\d{2})(\d{2})$/.exec(s) || /^(\d{4})[-./\s]+(\d{1,2})[-./\s]+(\d{1,2})\.?$/.exec(s);
+  if (!m) return null;
+  const iso = `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  if (!isValidDate(iso) || iso < '1900-01-01' || iso > todaySeoul(now)) return null;
+  return iso;
+}

@@ -11,7 +11,7 @@ public/                  Pages 정적 출력 디렉터리 (build output director
   _routes.json           /static/* 은 정적 파일, 나머지는 Functions
 functions/
   [[path]].js            Pages Functions 진입점(모든 경로) → src/app.js
-migrations/              D1 스키마(0001)·프로그램 기본 목록(0002)
+migrations/              D1 스키마(0001)·프로그램 기본 목록(0002)·등록 항목 주소/생년월일(0003)
 src/
   app.js                 요청 처리(라우팅·세션·CSRF·보안 헤더)
   config.js, site.js     환경 변수 설정·기관 정보
@@ -52,10 +52,23 @@ test/                    자동 테스트
    | 이름 | 종류 | 값 |
    |---|---|---|
    | `SESSION_SECRET` | Secret | 32자 이상 무작위 문자열 (예: `openssl rand -base64 48`) |
-   | `CONSENT_JSON` | Secret 또는 Text | 기관 확정 동의문 JSON (`content/consent.example.json` 형식). 없으면 등록 화면은 "등록 준비 중입니다." |
+   | `CONSENT_JSON` | Secret 또는 Text | 기관 확정 동의문 JSON (`content/consent.example.json` 형식). 없으면 필수 동의 1개(수집 항목만 표시)를 받고 문안 버전을 `미확정`으로 기록 |
+   | `SMS_PROVIDER` | Text | `solapi` (아래 '인증번호 문자 발송') |
+   | `SOLAPI_API_KEY` / `SOLAPI_API_SECRET` | Secret | Solapi API 키 |
+   | `SMS_SENDER` | Text | Solapi에 등록·승인된 발신번호 (예: `0313349966`) |
    | `COMO_APPLY_URL` | Text | 선택. 기본 `https://cco-mho.pages.dev/` |
 6. **재배포**(Deployments → Retry deployment). 바인딩·변수는 재배포 후 적용된다.
 7. **관리자 계정**: `npm run admin:create -- --phone 010XXXXXXXX --name 이름 --remote` (또는 출력되는 SQL을 대시보드 D1 콘솔에서 실행)
+
+### 인증번호 문자 발송 (Solapi)
+
+1. https://solapi.com 가입 → 충전(문자 1건당 과금).
+2. **발신번호 등록**: 기관 번호(예: 031-334-9966)를 발신번호로 등록하고 승인을 받는다(전기통신사업법상 사전 등록 필수, 서류 심사 소요).
+3. 콘솔 → API Key 관리에서 API Key·Secret 발급.
+4. Pages 변수에 `SMS_PROVIDER=solapi`, `SOLAPI_API_KEY`, `SOLAPI_API_SECRET`(Secret), `SMS_SENDER` 입력 후 재배포.
+
+발송 제한: 번호당 1분 1회·시간당 5회, IP당 시간당 20회, 전체 하루 `SMS_DAILY_LIMIT`(기본 300)회.
+다른 문자 서비스를 쓰려면 `src/sms/index.js`에 같은 인터페이스의 어댑터를 추가한다.
 
 `APP_ENV`를 지정하지 않으면 운영 모드다. 운영 모드에서 `SESSION_SECRET`이 없거나 `DB` 바인딩이 없으면 화면에 설정 오류 문구가 표시된다.
 
@@ -65,7 +78,9 @@ test/                    자동 테스트
 |---|---|---|
 | `APP_ENV` | `production` | `development`는 로컬 전용(개발 표시, 화면 인증번호) |
 | `SESSION_SECRET` | (운영 필수) | 인증번호 해시 키 |
-| `SMS_PROVIDER` | 운영 `none` / 개발 `console` | 운영에서 `console` 사용 불가 |
+| `SMS_PROVIDER` | 운영 `none` / 개발 `console` | `solapi` 실제 발송. 운영에서 `console` 사용 불가 |
+| `SOLAPI_API_KEY` / `SOLAPI_API_SECRET` / `SMS_SENDER` | - | `SMS_PROVIDER=solapi`일 때 필수 |
+| `SMS_DAILY_LIMIT` | 300 | 전체 하루 인증번호 발송 상한 |
 | `COMO_ADAPTER` | `none` | `mock`은 개발 전용, 운영에서 사용 불가 |
 | `COMO_MOCK_JSON` | - | 개발용 꼬모 모의 데이터 |
 | `COMO_APPLY_URL` | `https://cco-mho.pages.dev/` | 상담신청하기 이동 주소 |
@@ -104,8 +119,8 @@ npm run dev        # wrangler pages dev (workerd + 로컬 D1) http://localhost:8
 
 ## 미확정 사항 (기관 확인 필요)
 
-- 문자 발송 서비스·비용 → `src/sms/`에 어댑터 추가 전까지 운영에서 인증번호를 보낼 수 없다(로그인·등록 불가).
-- 동의문·보관기간·개인정보보호책임자 → `CONSENT_JSON`.
+- 문자 발송: Solapi 어댑터 구현됨. 계정·발신번호 등록·키 설정 전까지 운영에서 인증번호를 보낼 수 없다(로그인·등록 불가).
+- 동의문·보관기간·개인정보보호책임자 → `CONSENT_JSON`. 미설정 상태로 받은 동의는 문안 버전 `미확정`으로 기록되므로 확정 후 다시 받는다.
 - 꼬모 연동 인터페이스·통합 로그인 지원 여부.
 - 오픈채팅 URL(미제공, 링크 없음), 공지 기능(범위 외).
 - 프로그램별 실제 날짜·시간·장소·정원(관리자 화면에서 입력, 비어 있으면 '일정 미정').

@@ -12,9 +12,14 @@ export function loadConfig(env = {}, overrides = {}) {
     sessionSecret: env.SESSION_SECRET || (isProd ? '' : 'dev-only-secret-change-me-000000000000'),
     sessionIdleDays: Number(env.SESSION_IDLE_DAYS || 14),
     sessionMaxDays: Number(env.SESSION_MAX_DAYS || 60),
-    // 문자 발송: console(개발용, 인증번호를 로그·화면에 표시) | none(미설정)
-    // 실제 발송 서비스는 미정이다. 확정되면 src/sms/에 어댑터를 추가한다.
+    // 문자 발송: solapi(실제 발송) | console(개발용, 인증번호를 로그·화면에 표시) | none(미설정)
     smsProvider: env.SMS_PROVIDER || (isProd ? 'none' : 'console'),
+    solapiApiKey: env.SOLAPI_API_KEY || '',
+    solapiApiSecret: env.SOLAPI_API_SECRET || '',
+    // 발신번호: 문자 서비스에 사전 등록된 번호여야 한다(전기통신사업법).
+    smsSender: (env.SMS_SENDER || '').replace(/\D/g, ''),
+    // 하루 인증번호 발송 상한(비용·남용 방지)
+    smsDailyLimit: Number(env.SMS_DAILY_LIMIT || 300),
     // 꼬모 연동: none(미연결) | mock(개발용 모의 데이터, COMO_MOCK_JSON)
     // 실제 인터페이스는 미확인이다. 확인되면 src/como/에 어댑터를 추가한다.
     comoAdapter: env.COMO_ADAPTER || 'none',
@@ -36,15 +41,22 @@ export function validateConfig(cfg) {
     if (cfg.smsProvider === 'console') throw new Error('운영 환경에서는 SMS_PROVIDER=console을 사용할 수 없습니다.');
     if (cfg.comoAdapter === 'mock') throw new Error('운영 환경에서는 COMO_ADAPTER=mock을 사용할 수 없습니다.');
   }
-  if (!['console', 'none'].includes(cfg.smsProvider)) throw new Error(`지원하지 않는 SMS_PROVIDER: ${cfg.smsProvider}`);
+  if (!['console', 'none', 'solapi'].includes(cfg.smsProvider)) throw new Error(`지원하지 않는 SMS_PROVIDER: ${cfg.smsProvider}`);
+  if (cfg.smsProvider === 'solapi') {
+    if (!cfg.solapiApiKey || !cfg.solapiApiSecret) throw new Error('SMS_PROVIDER=solapi에는 SOLAPI_API_KEY, SOLAPI_API_SECRET이 필요합니다.');
+    if (!/^\d{8,12}$/.test(cfg.smsSender)) throw new Error('SMS_SENDER(사전 등록된 발신번호)가 필요합니다.');
+  }
   if (!['none', 'mock'].includes(cfg.comoAdapter)) throw new Error(`지원하지 않는 COMO_ADAPTER: ${cfg.comoAdapter}`);
   if (!/^https:\/\//.test(cfg.comoApplyUrl)) throw new Error('COMO_APPLY_URL은 https 주소여야 합니다.');
 }
 
 /**
- * 동의문: 기관 확정 문안을 CONSENT_JSON으로 제공한다.
- * 없으면 운영에서는 등록을 열지 않고(null), 개발에서는 개발용 표시가 붙은 임시 항목을 쓴다.
+ * 동의문: 기관 확정 문안을 CONSENT_JSON으로 제공한다(형식: content/consent.example.json).
+ * 없으면 필수 동의 항목 하나만 표시하고 문안 버전을 '미확정'으로 기록한다.
+ * 수집 목적·보관 기간·개인정보보호책임자 등은 임의로 만들지 않는다. 확정 문안이 들어오면 동의를 다시 받는다.
  */
+export const UNCONFIRMED_CONSENT_VERSION = '미확정';
+
 export function loadConsent(cfg) {
   if (cfg.consent) return cfg.consent;
   try {
@@ -52,11 +64,10 @@ export function loadConsent(cfg) {
     if (!doc.version || !Array.isArray(doc.items) || doc.items.length === 0) throw new Error('invalid');
     return { ...doc, isDraft: false };
   } catch {
-    if (cfg.isProd) return null;
     return {
-      version: 'dev-draft',
+      version: UNCONFIRMED_CONSENT_VERSION,
       isDraft: true,
-      items: [{ key: 'privacy', title: '개인정보 수집·이용 동의', required: true, body: '' }],
+      items: [{ key: 'privacy', title: '개인정보 수집·이용 동의', required: true, body: '수집 항목: 이름, 주소, 생년월일, 휴대전화 번호' }],
     };
   }
 }

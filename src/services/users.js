@@ -1,5 +1,5 @@
 import { all, batch, get, isUniqueError, run, stmt } from '../lib/db.js';
-import { nowIso } from '../lib/time.js';
+import { nowIso, parseBirthDate } from '../lib/time.js';
 import { auditStmt } from './audit.js';
 import { autoAssignStmts, cancelUpcomingStmt } from './enrollments.js';
 
@@ -11,16 +11,28 @@ export function findUserByPhone(db, phone) {
   return get(db, 'SELECT * FROM users WHERE phone = ?', phone);
 }
 
+/** 이름·주소·생년월일 입력 검증(최초 등록·내 정보 공통) */
+export function parsePersonForm(body) {
+  const str = (k) => String(Array.isArray(body[k]) ? body[k][0] ?? '' : body[k] ?? '').trim();
+  const value = { name: str('name'), address: str('address'), birth_date_input: str('birth_date') };
+  value.birth_date = parseBirthDate(value.birth_date_input);
+  const errors = {};
+  if (!value.name || value.name.length > 40) errors.name = '이름을 입력해 주세요.';
+  if (!value.address || value.address.length > 200) errors.address = '주소를 입력해 주세요.';
+  if (!value.birth_date) errors.birth_date = value.birth_date_input ? '생년월일을 확인해 주세요.' : '생년월일을 입력해 주세요.';
+  return { value, errors };
+}
+
 /**
  * 최초 등록: 사용자·접수·동의 이력을 한 번에(원자적으로) 만든다.
  * 같은 번호로 이미 계정이 있으면 새로 만들지 않고 null을 돌려준다.
  */
-export async function registerUser(db, { name, phone, region, consent, agreedKeys }) {
+export async function registerUser(db, { name, phone, address, birthDate, consent, agreedKeys }) {
   const now = nowIso();
   try {
     await batch(db, [
-      stmt(db, `INSERT INTO users (name, phone, phone_verified_at, region, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-        name, phone, now, region, now, now),
+      stmt(db, `INSERT INTO users (name, phone, phone_verified_at, address, birth_date, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`, name, phone, now, address, birthDate, now, now),
       stmt(db, `INSERT INTO registrations (user_id, registered_at, updated_at) SELECT id, ?, ? FROM users WHERE phone = ?`, now, now, phone),
       ...consent.items.map((item) => stmt(db, `INSERT INTO consents (user_id, purpose, agreed, doc_version, agreed_at)
         SELECT id, ?, ?, ?, ? FROM users WHERE phone = ?`, item.key, agreedKeys.includes(item.key) ? 1 : 0, consent.version, now, phone)),
@@ -32,8 +44,9 @@ export async function registerUser(db, { name, phone, region, consent, agreedKey
   return (await findUserByPhone(db, phone)).id;
 }
 
-export async function updateProfile(db, userId, { name, region }) {
-  await run(db, 'UPDATE users SET name = ?, region = ?, updated_at = ? WHERE id = ?', name, region, nowIso(), userId);
+export async function updateProfile(db, userId, { name, address, birthDate }) {
+  await run(db, 'UPDATE users SET name = ?, address = ?, birth_date = ?, updated_at = ? WHERE id = ?',
+    name, address, birthDate, nowIso(), userId);
 }
 
 /**

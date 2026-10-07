@@ -21,8 +21,8 @@ if (!phone || !name || name.length > 40 || !['manager', 'staff'].includes(values
 const q = (s) => `'${s.replace(/'/g, "''")}'`;
 const now = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 // 참여자로 등록된 번호는 관리자로 바꾸지 않는다(WHERE role != 'participant').
-const sql = `INSERT INTO users (name, phone, phone_verified_at, region, role, created_at, updated_at)
-VALUES (${q(name)}, ${q(phone)}, ${now}, '', ${q(values.role)}, ${now}, ${now})
+const sql = `INSERT INTO users (name, phone, phone_verified_at, role, created_at, updated_at)
+VALUES (${q(name)}, ${q(phone)}, ${now}, ${q(values.role)}, ${now}, ${now})
 ON CONFLICT(phone) DO UPDATE SET name = excluded.name, role = excluded.role, updated_at = excluded.updated_at
 WHERE users.role != 'participant';`.replace(/\n/g, ' ');
 

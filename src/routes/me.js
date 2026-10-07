@@ -4,9 +4,9 @@ import { get } from '../lib/db.js';
 import { applyGrow, cancelOwnGrow, EnrollError, growApplyBlocker } from '../services/enrollments.js';
 import { getSession, groupByTheme, listPrograms } from '../services/programs.js';
 import { attendedFor, groupAttended, growSessionsFor, nextAction, upcomingFor } from '../services/schedule.js';
-import { listConsents, updateProfile } from '../services/users.js';
+import { listConsents, parsePersonForm, updateProfile } from '../services/users.js';
 import * as views from '../views/me.js';
-import { deny, field, intParam, redirect, render, requireParticipant, requireSelected } from './helpers.js';
+import { deny, intParam, redirect, render, requireParticipant, requireSelected } from './helpers.js';
 
 /** 참여자 영역. 모든 조회는 세션 사용자 ID 기준이며 다른 사용자 ID를 받지 않는다. */
 export function meRoutes(r) {
@@ -97,13 +97,9 @@ export function meRoutes(r) {
   r.get('/me/profile', requireParticipant, (c) => profile(c));
 
   r.post('/me/profile', requireParticipant, async (c) => {
-    const name = field(c, 'name').trim();
-    const region = field(c, 'region').trim();
-    const errors = {};
-    if (!name || name.length > 40) errors.name = '이름을 입력해 주세요.';
-    if (!region || region.length > 60) errors.region = '거주 지역을 입력해 주세요.';
-    if (Object.keys(errors).length) return profile(c, { values: { name, region }, errors }, 422);
-    await updateProfile(c.db, c.user.id, { name, region });
+    const { value, errors } = parsePersonForm(c.body);
+    if (Object.keys(errors).length) return profile(c, { values: value, errors }, 422);
+    await updateProfile(c.db, c.user.id, { name: value.name, address: value.address, birthDate: value.birth_date });
     await c.session.flash('ok', '저장되었습니다.');
     return redirect(c, '/me/profile');
   });
