@@ -1,0 +1,25 @@
+{
+  "name": "login-in",
+  "version": "0.1.0",
+  "private": true,
+  "description": "로그人 — 용인종합사회복지관 북한이탈주민 지원사업 웹사이트",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:layout": "node scripts/layout-check.js",
+    "admin:create": "node scripts/create-admin.js",
+    "seed:dev": "node scripts/seed-dev.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}
