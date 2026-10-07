@@ -1,78 +1,143 @@
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import express from 'express';
-import { csrfMiddleware, sessionMiddleware } from './lib/session.js';
-import { groupByTheme, listPrograms } from './services/programs.js';
-import { getUser } from './services/users.js';
+import { createComoAdapter } from './como/adapters.js';
+import { loadConfig } from './config.js';
+import { Router } from './lib/router.js';
+import { purgeExpired, Session } from './lib/session.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
-import { buildCtx, deny, render } from './routes/helpers.js';
+import { deny, render, respond } from './routes/helpers.js';
 import { meRoutes } from './routes/me.js';
-import { errorPage, homePage } from './views/public.js';
+import { groupByTheme, listPrograms } from './services/programs.js';
+import { getUser } from './services/users.js';
+import { createSmsSender } from './sms/index.js';
+import { homePage } from './views/public.js';
 
-const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+const MAX_BODY = 20 * 1024;
 
-const CSP = [
-  "default-src 'self'",
-  "script-src 'none'",
-  "style-src 'self' https://fonts.googleapis.com",
-  'font-src https://fonts.gstatic.com',
-  "img-src 'self' data:",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-  "base-uri 'none'",
-  "object-src 'none'",
-].join('; ');
+const SECURITY_HEADERS = {
+  'Content-Security-Policy': [
+    "default-src 'self'",
+    "script-src 'none'",
+    "style-src 'self' https://fonts.googleapis.com",
+    'font-src https://fonts.gstatic.com',
+    "img-src 'self' data:",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'none'",
+    "object-src 'none'",
+  ].join('; '),
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+};
 
-export function createApp({ db, cfg, sms, como, logger = console }) {
-  const app = express();
-  app.disable('x-powered-by');
-  if (cfg.trustProxy) app.set('trust proxy', 1);
-  app.locals.cfg = cfg;
-  app.locals.devNotice = cfg.isProd ? null : '개발 환경';
+/** Cloudflare Pages 환경 변수·바인딩으로 의존성을 만든다. D1 바인딩 이름은 DB. */
+export function depsFromEnv(env) {
+  const cfg = loadConfig(env);
+  return { cfg, db: env.DB, sms: createSmsSender(cfg), como: createComoAdapter(cfg), logger: console };
+}
 
-  app.use((req, res, next) => {
-    res.set({
-      'Content-Security-Policy': CSP,
-      'X-Content-Type-Options': 'nosniff',
-      'X-Frame-Options': 'DENY',
-      'Referrer-Policy': 'same-origin',
-      'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
-    });
-    if (cfg.isProd) res.set('Strict-Transport-Security', 'max-age=31536000');
-    next();
-  });
+function buildRouter() {
+  const r = new Router();
+  r.get('/healthz', (c) => respond(c, 'ok', { type: 'text/plain; charset=utf-8' }));
+  r.get('/', async (c) => render(c, homePage, groupByTheme(await listPrograms(c.db, { publicOnly: true })), 200, { session: !!c.user }));
+  authRoutes(r);
+  meRoutes(r);
+  adminRoutes(r);
+  return r;
+}
 
-  app.use('/static', express.static(PUBLIC_DIR, { maxAge: cfg.isProd ? '1d' : 0, index: false }));
-  app.get('/healthz', (req, res) => res.type('text').send('ok'));
+async function parseBody(request) {
+  const type = request.headers.get('content-type') || '';
+  if (!type.startsWith('application/x-www-form-urlencoded')) return {};
+  const text = await request.text();
+  if (text.length > MAX_BODY) throw Object.assign(new Error('payload_too_large'), { status: 413 });
+  const out = {};
+  for (const [k, v] of new URLSearchParams(text)) {
+    if (k in out) out[k] = [].concat(out[k], v);
+    else out[k] = v;
+  }
+  return out;
+}
 
-  app.use(express.urlencoded({ extended: false, limit: '20kb' }));
-  app.use(sessionMiddleware(db, cfg));
-  app.use((req, res, next) => {
-    req.user = req.session.userId ? getUser(db, req.session.userId) || null : null;
-    // 개인 화면은 캐시하지 않는다.
-    if (req.user || req.method !== 'GET') res.set('Cache-Control', 'no-store');
-    next();
-  });
-  app.use(csrfMiddleware);
+function withHeaders(response, cfg, user) {
+  const res = new Response(response.body, response);
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) if (!res.headers.has(k)) res.headers.set(k, v);
+  if (cfg && cfg.isProd) res.headers.set('Strict-Transport-Security', 'max-age=31536000');
+  // 개인 화면과 POST 응답은 캐시하지 않는다.
+  if (user || res.headers.has('set-cookie')) res.headers.set('Cache-Control', 'no-store');
+  return res;
+}
 
-  app.get('/', (req, res) => {
-    render(req, res, homePage, groupByTheme(listPrograms(db, { publicOnly: true })));
-  });
+function plainError(status, message) {
+  return new Response(message, { status, headers: { 'content-type': 'text/plain; charset=utf-8', ...SECURITY_HEADERS } });
+}
 
-  app.use(authRoutes({ db, cfg, sms, logger }));
-  app.use(meRoutes({ db, cfg, como, logger }));
-  app.use(adminRoutes({ db, cfg, como }));
+export function createApp({ resolveDeps = depsFromEnv } = {}) {
+  const router = buildRouter();
 
-  app.use((req, res) => deny(req, res, 404));
+  return {
+    async fetch(request, env = {}, ctx = {}) {
+      let deps;
+      try {
+        deps = resolveDeps(env);
+      } catch (err) {
+        console.error(err);
+        return plainError(500, `설정 오류: ${err.message}`);
+      }
+      if (!deps.db) return plainError(500, '설정 오류: D1 데이터베이스 바인딩(DB)이 없습니다.');
 
-  // eslint-disable-next-line no-unused-vars
-  app.use((err, req, res, next) => {
-    const status = err.status && err.status < 500 ? err.status : 500;
-    if (status >= 500) logger.error(err);
-    if (!req.session) return res.status(status).type('text').send('error');
-    res.status(status).type('html').send(String(errorPage(buildCtx(req), status, err.expose)));
-  });
+      const url = new URL(request.url);
+      const c = {
+        ...deps,
+        req: request,
+        url,
+        path: url.pathname,
+        method: request.method,
+        query: url.searchParams,
+        params: {},
+        body: {},
+        ip: request.headers.get('cf-connecting-ip') || null,
+        resHeaders: new Headers(),
+        user: null,
+      };
+      c.session = new Session(c);
 
-  return app;
+      try {
+        if (c.method === 'POST') {
+          const len = Number(request.headers.get('content-length') || 0);
+          if (len > MAX_BODY) return withHeaders(plainError(413, '요청이 너무 큽니다.'), deps.cfg);
+          c.body = await parseBody(request);
+        }
+        await c.session.load();
+        if (c.session.userId) c.user = await getUser(c.db, c.session.userId);
+
+        const match = router.match(c.method, c.path);
+        let response = null;
+        if (c.method === 'POST' && !c.session.checkCsrf(typeof c.body._csrf === 'string' ? c.body._csrf : '')) {
+          response = await deny(c, 403, '요청이 만료되었습니다. 페이지를 새로 열어 다시 시도해 주세요.');
+        } else if (!match) {
+          response = await deny(c, 404);
+        } else {
+          c.params = match.params;
+          for (const h of match.handlers) {
+            response = await h(c);
+            if (response) break;
+          }
+          if (!response) response = await deny(c, 404);
+        }
+        // 만료 세션·인증번호 정리(가끔, 응답 이후)
+        if (Math.random() < 0.01 && ctx.waitUntil) ctx.waitUntil(purgeExpired(c.db).catch(() => {}));
+        return withHeaders(response, deps.cfg, c.user);
+      } catch (err) {
+        if (err.status === 413) return withHeaders(plainError(413, '요청이 너무 큽니다.'), deps.cfg);
+        deps.logger.error(err);
+        try {
+          return withHeaders(await deny(c, 500), deps.cfg, c.user);
+        } catch {
+          return plainError(500, '오류가 발생했습니다.');
+        }
+      }
+    },
+  };
 }

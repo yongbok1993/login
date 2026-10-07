@@ -1,27 +1,37 @@
-// 반응형 검수: 개발용 데이터로 서버를 띄우고 각 화면을 여러 폭에서 열어 가로 넘침을 확인한다.
-// 사용법: npm run test:layout  (환경 변수 CHROMIUM_PATH로 브라우저 경로 지정 가능, SCREENSHOTS=1 이면 캡처 저장)
-import { spawn, execFileSync } from 'node:child_process';
+// 반응형 검수: 개발용 데이터로 wrangler pages dev(workerd + 로컬 D1)를 띄우고
+// 각 화면을 여러 폭에서 열어 가로 넘침·작은 터치 영역을 확인한다.
+// 사용법: npm run test:layout  (CHROMIUM_PATH로 브라우저 경로 지정 가능, SCREENSHOTS=1 이면 캡처 저장)
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
+import { get } from '../src/lib/db.js';
+import { applyLocalMigrations, openLocalDb, pagesDevArgs, ROOT } from './local-d1.js';
+import { MOCK_COMO, seed } from './seed-dev.js';
 
 const WIDTHS = [320, 360, 390, 430, 768, 1024, 1280];
 const PORT = 3300 + Math.floor(Math.random() * 500);
 const BASE = `http://127.0.0.1:${PORT}`;
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'login-layout-'));
-const env = { ...process.env, NODE_ENV: 'development', PORT: String(PORT), DATABASE_PATH: path.join(tmp, 'db.sqlite'),
-  COMO_ADAPTER: 'mock', COMO_MOCK_FILE: path.join(tmp, 'como.json'), SMS_PROVIDER: 'console' };
+const persistTo = fs.mkdtempSync(path.join(os.tmpdir(), 'login-layout-'));
 
-execFileSync(process.execPath, ['scripts/seed-dev.js'], { env, stdio: 'ignore' });
-const server = spawn(process.execPath, ['src/server.js'], { env, stdio: 'ignore' });
+applyLocalMigrations(persistTo);
+const local = await openLocalDb(persistTo);
+await seed(local.db);
+const growId = (await get(local.db, `SELECT s.id FROM program_sessions s JOIN programs p ON p.id = s.program_id
+  WHERE p.code = 'grow-career' ORDER BY s.id LIMIT 1`)).id;
+await local.dispose();
+
+const server = spawn(process.execPath, pagesDevArgs({ port: PORT, persistTo,
+  bindings: ['APP_ENV=development', 'COMO_ADAPTER=mock', `COMO_MOCK_JSON=${JSON.stringify(MOCK_COMO)}`] }),
+{ cwd: ROOT, stdio: 'ignore', detached: true, env: { ...process.env, CI: '1' } });
 const shotDir = process.env.SCREENSHOTS ? 'screenshots' : null;
 if (shotDir) fs.mkdirSync(shotDir, { recursive: true });
 
 async function waitForServer() {
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 160; i++) {
     try { if ((await fetch(`${BASE}/healthz`)).ok) return; } catch { /* retry */ }
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 250));
   }
   throw new Error('server did not start');
 }
@@ -91,10 +101,6 @@ try {
 
   const p = await browser.newPage();
   await login(p, '01000000001');
-  const growId = execFileSync(process.execPath, ['-e', `
-    const D=require('better-sqlite3');const d=new D(process.argv[1]);
-    console.log(d.prepare("SELECT s.id FROM program_sessions s JOIN programs p ON p.id=s.program_id WHERE p.code='grow-career' ORDER BY s.id LIMIT 1").get().id)`,
-  env.DATABASE_PATH]).toString().trim();
   for (const [u, l] of [['/me', 'me'], ['/me/programs', 'me-programs'], ['/me/open/counseling', 'me-counseling'],
     [`/me/grow/${growId}`, 'grow-confirm'], ['/me/profile', 'me-profile'], ['/me/phone', 'me-phone']]) {
     failures += await check(p, u, l);
@@ -112,8 +118,8 @@ try {
   }
 } finally {
   await browser.close();
-  server.kill();
-  fs.rmSync(tmp, { recursive: true, force: true });
+  try { process.kill(-server.pid); } catch { /* 이미 종료 */ }
+  fs.rmSync(persistTo, { recursive: true, force: true });
 }
 console.log(failures ? `\n문제 ${failures}건` : '\n모든 화면 통과');
 process.exit(failures ? 1 : 0);

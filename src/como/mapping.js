@@ -1,3 +1,4 @@
+import { all, batch, get, run, stmt } from '../lib/db.js';
 import { nowIso } from '../lib/time.js';
 import { audit } from '../services/audit.js';
 
@@ -23,30 +24,36 @@ function normName(s) {
 }
 
 function logSync(db, userId, action, result, message) {
-  db.prepare('INSERT INTO como_sync_log (user_id, action, result, message, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run(userId, action, result, message ?? null, nowIso());
+  return run(db, 'INSERT INTO como_sync_log (user_id, action, result, message, created_at) VALUES (?, ?, ?, ?, ?)',
+    userId, action, result, message ?? null, nowIso());
 }
 
-function saveLink(db, userId, fields) {
-  const now = nowIso();
-  db.prepare(`INSERT INTO como_links (user_id, status, external_id, phone_at_link, candidates, detail, checked_at, linked_at)
-    VALUES (@user_id, @status, @external_id, @phone_at_link, @candidates, @detail, @now, @linked_at)
-    ON CONFLICT(user_id) DO UPDATE SET status = excluded.status, external_id = excluded.external_id,
-      phone_at_link = excluded.phone_at_link, candidates = excluded.candidates, detail = excluded.detail,
-      checked_at = excluded.checked_at, linked_at = excluded.linked_at`).run({
-    user_id: userId, external_id: null, phone_at_link: null, candidates: null, detail: null, linked_at: null, ...fields, now,
-  });
-  if (fields.status !== 'linked') db.prepare('DELETE FROM como_status WHERE user_id = ?').run(userId);
+async function saveLink(db, userId, fields) {
+  const f = { external_id: null, phone_at_link: null, candidates: null, detail: null, linked_at: null, ...fields };
+  // 연결 상태가 아니면 가져온 상담 현황을 함께 지운다(원자적).
+  await batch(db, [
+    stmt(db, `INSERT INTO como_links (user_id, status, external_id, phone_at_link, candidates, detail, checked_at, linked_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET status = excluded.status, external_id = excluded.external_id,
+        phone_at_link = excluded.phone_at_link, candidates = excluded.candidates, detail = excluded.detail,
+        checked_at = excluded.checked_at, linked_at = excluded.linked_at`,
+    userId, f.status, f.external_id, f.phone_at_link, f.candidates, f.detail, nowIso(), f.linked_at),
+    f.status !== 'linked' ? stmt(db, 'DELETE FROM como_status WHERE user_id = ?', userId) : null,
+  ]);
 }
 
 export function getLink(db, userId) {
-  return db.prepare('SELECT * FROM como_links WHERE user_id = ?').get(userId);
+  return get(db, 'SELECT * FROM como_links WHERE user_id = ?', userId);
+}
+
+function linkedToOther(db, externalId, userId) {
+  return get(db, 'SELECT user_id FROM como_links WHERE external_id = ? AND user_id != ?', externalId, userId);
 }
 
 /** 한 사용자의 매핑 확인. 결과 상태 문자열 또는 'not_configured' */
 export async function checkLink(db, adapter, user, actorId = null) {
   if (!adapter.configured) return 'not_configured';
-  const current = getLink(db, user.id);
+  const current = await getLink(db, user.id);
   // 연결된 상태에서 번호가 그대로면 다시 조회하지 않는다.
   if (current && current.status === 'linked' && current.phone_at_link === user.phone) return 'linked';
 
@@ -54,35 +61,40 @@ export async function checkLink(db, adapter, user, actorId = null) {
   try {
     accounts = await adapter.findAccountsByPhone(user.phone);
   } catch (err) {
-    saveLink(db, user.id, { status: 'error', detail: 'lookup_failed' });
-    logSync(db, user.id, 'lookup', 'error', String(err.message || err).slice(0, 200));
+    await saveLink(db, user.id, { status: 'error', detail: 'lookup_failed' });
+    await logSync(db, user.id, 'lookup', 'error', String(err.message || err).slice(0, 200));
     return 'error';
   }
 
   let result;
   if (accounts.length === 0) {
-    saveLink(db, user.id, { status: 'not_found' });
+    await saveLink(db, user.id, { status: 'not_found' });
     result = 'not_found';
   } else if (accounts.length > 1) {
-    saveLink(db, user.id, { status: 'conflict', detail: 'multiple_accounts',
+    await saveLink(db, user.id, { status: 'conflict', detail: 'multiple_accounts',
       candidates: JSON.stringify(accounts.map((a) => a.externalId)) });
     result = 'conflict';
   } else {
     const acct = accounts[0];
-    const other = db.prepare('SELECT user_id FROM como_links WHERE external_id = ? AND user_id != ?').get(acct.externalId, user.id);
-    if (other) {
-      saveLink(db, user.id, { status: 'conflict', detail: 'linked_to_other_user', candidates: JSON.stringify([acct.externalId]) });
+    if (await linkedToOther(db, acct.externalId, user.id)) {
+      await saveLink(db, user.id, { status: 'conflict', detail: 'linked_to_other_user', candidates: JSON.stringify([acct.externalId]) });
       result = 'conflict';
     } else if (acct.name && normName(acct.name) !== normName(user.name)) {
-      saveLink(db, user.id, { status: 'conflict', detail: 'name_mismatch', candidates: JSON.stringify([acct.externalId]) });
+      await saveLink(db, user.id, { status: 'conflict', detail: 'name_mismatch', candidates: JSON.stringify([acct.externalId]) });
       result = 'conflict';
     } else {
-      saveLink(db, user.id, { status: 'linked', external_id: acct.externalId, phone_at_link: user.phone, linked_at: nowIso() });
-      result = 'linked';
+      try {
+        await saveLink(db, user.id, { status: 'linked', external_id: acct.externalId, phone_at_link: user.phone, linked_at: nowIso() });
+        result = 'linked';
+      } catch {
+        // UNIQUE(external_id): 동시에 다른 사용자와 연결된 경우
+        await saveLink(db, user.id, { status: 'conflict', detail: 'linked_to_other_user', candidates: JSON.stringify([acct.externalId]) });
+        result = 'conflict';
+      }
     }
   }
-  logSync(db, user.id, 'lookup', result);
-  if (actorId) audit(db, actorId, 'como.check', 'user', user.id, { result });
+  await logSync(db, user.id, 'lookup', result);
+  if (actorId) await audit(db, actorId, 'como.check', 'user', user.id, { result });
   return result;
 }
 
@@ -99,46 +111,51 @@ export async function confirmLink(db, adapter, user, externalId, actorId) {
     return 'error';
   }
   if (!accounts.some((a) => a.externalId === externalId)) return 'invalid';
-  const other = db.prepare('SELECT user_id FROM como_links WHERE external_id = ? AND user_id != ?').get(externalId, user.id);
-  if (other) return 'taken';
-  saveLink(db, user.id, { status: 'linked', external_id: externalId, phone_at_link: user.phone, linked_at: nowIso(),
+  if (await linkedToOther(db, externalId, user.id)) return 'taken';
+  await saveLink(db, user.id, { status: 'linked', external_id: externalId, phone_at_link: user.phone, linked_at: nowIso(),
     detail: 'admin_confirmed' });
-  logSync(db, user.id, 'confirm', 'linked');
-  audit(db, actorId, 'como.confirm', 'user', user.id, { externalId });
+  await logSync(db, user.id, 'confirm', 'linked');
+  await audit(db, actorId, 'como.confirm', 'user', user.id, { externalId });
   return 'linked';
 }
 
-export function unlink(db, userId, actorId) {
-  saveLink(db, userId, { status: 'needs_recheck', detail: 'admin_unlinked' });
-  logSync(db, userId, 'unlink', 'needs_recheck');
-  audit(db, actorId, 'como.unlink', 'user', userId);
+export async function unlink(db, userId, actorId) {
+  await saveLink(db, userId, { status: 'needs_recheck', detail: 'admin_unlinked' });
+  await logSync(db, userId, 'unlink', 'needs_recheck');
+  await audit(db, actorId, 'como.unlink', 'user', userId);
+}
+
+/** 관리자 '다시 확인': 기존 연결을 무시하고 새로 조회한다. */
+export async function recheck(db, adapter, user, actorId) {
+  await run(db, "UPDATE como_links SET status = 'needs_recheck' WHERE user_id = ? AND status = 'linked'", user.id);
+  return checkLink(db, adapter, user, actorId);
 }
 
 /** 상담 현황 동기화: 연결 상태이고 연결 당시 번호와 현재 번호가 같을 때만 */
 export async function syncStatus(db, adapter, user) {
   if (!adapter.configured) return 'not_configured';
-  const link = getLink(db, user.id);
+  const link = await getLink(db, user.id);
   if (!link || link.status !== 'linked' || link.phone_at_link !== user.phone) return 'not_linked';
   let s;
   try {
     s = await adapter.getCounselingSummary(link.external_id);
   } catch (err) {
-    logSync(db, user.id, 'sync', 'error', String(err.message || err).slice(0, 200));
+    await logSync(db, user.id, 'sync', 'error', String(err.message || err).slice(0, 200));
     return 'error';
   }
   const completed = Number.isInteger(s.completed) && s.completed >= 0 ? s.completed : null;
   const total = Number.isInteger(s.total) && s.total >= 0 ? s.total : null;
   if (completed === null) {
-    logSync(db, user.id, 'sync', 'error', 'invalid_summary');
+    await logSync(db, user.id, 'sync', 'error', 'invalid_summary');
     return 'error';
   }
-  db.prepare(`INSERT INTO como_status (user_id, external_id, total_sessions, completed_sessions, next_at, source,
+  await run(db, `INSERT INTO como_status (user_id, external_id, total_sessions, completed_sessions, next_at, source,
       remote_updated_at, synced_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(user_id) DO UPDATE SET external_id = excluded.external_id, total_sessions = excluded.total_sessions,
       completed_sessions = excluded.completed_sessions, next_at = excluded.next_at, source = excluded.source,
-      remote_updated_at = excluded.remote_updated_at, synced_at = excluded.synced_at`)
-    .run(user.id, link.external_id, total, completed, s.nextAt || null, adapter.source, s.updatedAt || null, nowIso());
-  logSync(db, user.id, 'sync', 'ok');
+      remote_updated_at = excluded.remote_updated_at, synced_at = excluded.synced_at`,
+  user.id, link.external_id, total, completed, s.nextAt || null, adapter.source, s.updatedAt || null, nowIso());
+  await logSync(db, user.id, 'sync', 'ok');
   return 'ok';
 }
 
@@ -146,11 +163,11 @@ export async function syncStatus(db, adapter, user) {
  * 참여자 화면용 상담 현황.
  * 미연결·연동 실패·번호 불일치에서는 수치를 만들지 않고 { state: 'unavailable' }만 돌려준다.
  */
-export function counselingView(db, adapter, user) {
+export async function counselingView(db, adapter, user) {
   if (!adapter.configured) return { state: 'unavailable' };
-  const link = getLink(db, user.id);
+  const link = await getLink(db, user.id);
   if (!link || link.status !== 'linked' || link.phone_at_link !== user.phone) return { state: 'unavailable' };
-  const st = db.prepare('SELECT * FROM como_status WHERE user_id = ? AND external_id = ?').get(user.id, link.external_id);
+  const st = await get(db, 'SELECT * FROM como_status WHERE user_id = ? AND external_id = ?', user.id, link.external_id);
   if (!st || st.source !== adapter.source) return { state: 'unavailable' };
   const total = st.total_sessions;
   return {
@@ -171,7 +188,7 @@ export function counselingView(db, adapter, user) {
 export async function refreshIfStale(db, adapter, user, maxAgeMinutes) {
   if (!adapter.configured) return;
   const maxAgeMs = maxAgeMinutes * 60 * 1000;
-  const link = getLink(db, user.id);
+  const link = await getLink(db, user.id);
   const stale = (iso) => !iso || Date.now() - Date.parse(iso) >= maxAgeMs;
   const needsCheck = !link
     || (link.status === 'needs_recheck' && link.detail !== 'admin_unlinked')
@@ -182,7 +199,16 @@ export async function refreshIfStale(db, adapter, user, maxAgeMinutes) {
   } else if (link.status !== 'linked') {
     return;
   }
-  const st = db.prepare('SELECT synced_at FROM como_status WHERE user_id = ?').get(user.id);
+  const st = await get(db, 'SELECT synced_at FROM como_status WHERE user_id = ?', user.id);
   if (st && !stale(st.synced_at)) return;
   await syncStatus(db, adapter, user);
+}
+
+export function comoOverview(db) {
+  return Promise.all([
+    all(db, `SELECT u.id, u.name, u.phone, l.status, l.detail, l.checked_at FROM users u
+      LEFT JOIN como_links l ON l.user_id = u.id WHERE u.role = 'participant' AND u.is_selected = 1
+      ORDER BY CASE l.status WHEN 'conflict' THEN 0 WHEN 'error' THEN 1 WHEN 'needs_recheck' THEN 2 ELSE 3 END, u.name`),
+    all(db, `SELECT g.*, u.name FROM como_sync_log g LEFT JOIN users u ON u.id = g.user_id ORDER BY g.id DESC LIMIT 100`),
+  ]);
 }

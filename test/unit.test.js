@@ -26,12 +26,15 @@ test('날짜 표기', () => {
   assert.equal(formatDate(null), '');
 });
 
-test('운영 설정: 개발용 문자·꼬모 모의 어댑터와 약한 세션 키를 거부한다', () => {
+test('운영 설정: 기본값은 운영, 개발용 문자·꼬모 모의 어댑터와 약한 세션 키를 거부한다', () => {
   const secret = 'x'.repeat(40);
-  assert.throws(() => loadConfig({ NODE_ENV: 'production' }), /SESSION_SECRET/);
-  assert.throws(() => loadConfig({ NODE_ENV: 'production', SESSION_SECRET: secret, SMS_PROVIDER: 'console' }), /SMS_PROVIDER/);
-  assert.throws(() => loadConfig({ NODE_ENV: 'production', SESSION_SECRET: secret, COMO_ADAPTER: 'mock' }), /COMO_ADAPTER/);
-  const cfg = loadConfig({ NODE_ENV: 'production', SESSION_SECRET: secret });
+  // APP_ENV가 없으면 운영으로 동작한다(배포 환경에서 개발용 기능이 켜지지 않도록).
+  assert.throws(() => loadConfig({}), /SESSION_SECRET/);
+  assert.throws(() => loadConfig({ SESSION_SECRET: secret, SMS_PROVIDER: 'console' }), /SMS_PROVIDER/);
+  assert.throws(() => loadConfig({ SESSION_SECRET: secret, COMO_ADAPTER: 'mock' }), /COMO_ADAPTER/);
+  assert.throws(() => loadConfig({ APP_ENV: 'staging' }), /APP_ENV/);
+  const cfg = loadConfig({ SESSION_SECRET: secret });
+  assert.equal(cfg.isProd, true);
   assert.equal(cfg.smsProvider, 'none');
   assert.equal(cfg.comoAdapter, 'none');
   assert.equal(cfg.comoApplyUrl, 'https://cco-mho.pages.dev/');

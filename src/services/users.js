@@ -1,34 +1,39 @@
+import { all, batch, get, isUniqueError, run, stmt } from '../lib/db.js';
 import { nowIso } from '../lib/time.js';
-import { audit } from './audit.js';
-import { autoAssignLink, cancelUpcomingOnDeselect } from './enrollments.js';
+import { auditStmt } from './audit.js';
+import { autoAssignStmts, cancelUpcomingStmt } from './enrollments.js';
 
 export function getUser(db, id) {
-  return db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  return get(db, 'SELECT * FROM users WHERE id = ?', id);
 }
 
 export function findUserByPhone(db, phone) {
-  return db.prepare('SELECT * FROM users WHERE phone = ?').get(phone);
+  return get(db, 'SELECT * FROM users WHERE phone = ?', phone);
 }
 
 /**
- * 최초 등록: 사용자·접수·동의 이력을 한 번에 만든다.
+ * 최초 등록: 사용자·접수·동의 이력을 한 번에(원자적으로) 만든다.
  * 같은 번호로 이미 계정이 있으면 새로 만들지 않고 null을 돌려준다.
  */
-export function registerUser(db, { name, phone, region, consent, agreedKeys }) {
+export async function registerUser(db, { name, phone, region, consent, agreedKeys }) {
   const now = nowIso();
-  return db.transaction(() => {
-    if (findUserByPhone(db, phone)) return null;
-    const userId = Number(db.prepare(`INSERT INTO users (name, phone, phone_verified_at, region, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(name, phone, now, region, now, now).lastInsertRowid);
-    db.prepare(`INSERT INTO registrations (user_id, registered_at, updated_at) VALUES (?, ?, ?)`).run(userId, now, now);
-    const ins = db.prepare(`INSERT INTO consents (user_id, purpose, agreed, doc_version, agreed_at) VALUES (?, ?, ?, ?, ?)`);
-    for (const item of consent.items) ins.run(userId, item.key, agreedKeys.includes(item.key) ? 1 : 0, consent.version, now);
-    return userId;
-  })();
+  try {
+    await batch(db, [
+      stmt(db, `INSERT INTO users (name, phone, phone_verified_at, region, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+        name, phone, now, region, now, now),
+      stmt(db, `INSERT INTO registrations (user_id, registered_at, updated_at) SELECT id, ?, ? FROM users WHERE phone = ?`, now, now, phone),
+      ...consent.items.map((item) => stmt(db, `INSERT INTO consents (user_id, purpose, agreed, doc_version, agreed_at)
+        SELECT id, ?, ?, ?, ? FROM users WHERE phone = ?`, item.key, agreedKeys.includes(item.key) ? 1 : 0, consent.version, now, phone)),
+    ]);
+  } catch (err) {
+    if (isUniqueError(err)) return null;
+    throw err;
+  }
+  return (await findUserByPhone(db, phone)).id;
 }
 
-export function updateProfile(db, userId, { name, region }) {
-  db.prepare('UPDATE users SET name = ?, region = ?, updated_at = ? WHERE id = ?').run(name, region, nowIso(), userId);
+export async function updateProfile(db, userId, { name, region }) {
+  await run(db, 'UPDATE users SET name = ?, region = ?, updated_at = ? WHERE id = ?', name, region, nowIso(), userId);
 }
 
 /**
@@ -36,23 +41,26 @@ export function updateProfile(db, userId, { name, region }) {
  * 꼬모 연결은 해제하고 재확인 대상으로 돌리며, 가져온 상담 현황도 지운다.
  * 현재 세션을 제외한 다른 로그인 세션은 모두 종료한다.
  */
-export function changePhone(db, userId, newPhone, keepTokenHash) {
+export async function changePhone(db, userId, newPhone, keepTokenHash) {
   const now = nowIso();
-  return db.transaction(() => {
-    const taken = findUserByPhone(db, newPhone);
-    if (taken && taken.id !== userId) return false;
-    db.prepare('UPDATE users SET phone = ?, phone_verified_at = ?, updated_at = ? WHERE id = ?').run(newPhone, now, now, userId);
-    db.prepare(`UPDATE como_links SET status = 'needs_recheck', external_id = NULL, phone_at_link = NULL, candidates = NULL,
-      detail = 'phone_changed', checked_at = ?, linked_at = NULL WHERE user_id = ?`).run(now, userId);
-    db.prepare('DELETE FROM como_status WHERE user_id = ?').run(userId);
-    db.prepare('DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?').run(userId, keepTokenHash);
-    audit(db, userId, 'user.phone_change', 'user', userId);
-    return true;
-  })();
+  try {
+    await batch(db, [
+      stmt(db, 'UPDATE users SET phone = ?, phone_verified_at = ?, updated_at = ? WHERE id = ?', newPhone, now, now, userId),
+      stmt(db, `UPDATE como_links SET status = 'needs_recheck', external_id = NULL, phone_at_link = NULL, candidates = NULL,
+        detail = 'phone_changed', checked_at = ?, linked_at = NULL WHERE user_id = ?`, now, userId),
+      stmt(db, 'DELETE FROM como_status WHERE user_id = ?', userId),
+      stmt(db, 'DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?', userId, keepTokenHash),
+      auditStmt(db, userId, 'user.phone_change', 'user', userId),
+    ]);
+  } catch (err) {
+    if (isUniqueError(err)) return false;
+    throw err;
+  }
+  return true;
 }
 
 export function listConsents(db, userId) {
-  return db.prepare('SELECT * FROM consents WHERE user_id = ? ORDER BY id').all(userId);
+  return all(db, 'SELECT * FROM consents WHERE user_id = ? ORDER BY id', userId);
 }
 
 // ── 관리자 ─────────────────────────────────────────────
@@ -66,48 +74,51 @@ export const INTERNAL_STATUS = {
 };
 
 export function listRegistrants(db, { status = '' } = {}) {
-  const where = ["u.role = 'participant'"];
-  const params = [];
-  if (status && INTERNAL_STATUS[status]) { where.push('r.internal_status = ?'); params.push(status); }
-  return db.prepare(`SELECT u.*, r.registered_at, r.internal_status, l.status AS como_status
+  const filter = status && INTERNAL_STATUS[status] ? status : null;
+  return all(db, `SELECT u.*, r.registered_at, r.internal_status, l.status AS como_status
     FROM users u JOIN registrations r ON r.user_id = u.id LEFT JOIN como_links l ON l.user_id = u.id
-    WHERE ${where.join(' AND ')} ORDER BY r.registered_at DESC`).all(...params);
+    WHERE u.role = 'participant' AND (?1 IS NULL OR r.internal_status = ?1) ORDER BY r.registered_at DESC`, filter);
 }
 
 export function listSelectedParticipants(db) {
-  return db.prepare("SELECT * FROM users WHERE role = 'participant' AND is_selected = 1 ORDER BY name").all();
+  return all(db, "SELECT * FROM users WHERE role = 'participant' AND is_selected = 1 ORDER BY name");
 }
 
 export function getRegistration(db, userId) {
-  return db.prepare('SELECT * FROM registrations WHERE user_id = ?').get(userId);
+  return get(db, 'SELECT * FROM registrations WHERE user_id = ?', userId);
 }
 
-export function setInternalStatus(db, actorId, userId, status) {
+export async function setInternalStatus(db, actorId, userId, status) {
   if (!INTERNAL_STATUS[status] || status === 'selected' || status === 'released') return false;
-  const user = getUser(db, userId);
+  const user = await getUser(db, userId);
   if (!user || user.role !== 'participant' || user.is_selected) return false;
-  db.prepare('UPDATE registrations SET internal_status = ?, updated_at = ? WHERE user_id = ?').run(status, nowIso(), userId);
-  audit(db, actorId, 'registration.status', 'user', userId, { status });
+  await batch(db, [
+    stmt(db, 'UPDATE registrations SET internal_status = ?, updated_at = ? WHERE user_id = ?', status, nowIso(), userId),
+    auditStmt(db, actorId, 'registration.status', 'user', userId, { status }),
+  ]);
   return true;
 }
 
-/** 선정·해제. 선정 시 Link 전체 자동 배정, 해제 시 예정 배정 취소. */
-export function setSelected(db, actorId, userId, selected) {
-  const user = getUser(db, userId);
+/** 선정·해제. 선정 시 Link 전체 자동 배정, 해제 시 예정 배정 취소. 하나의 batch로 원자적으로 처리한다. */
+export async function setSelected(db, actorId, userId, selected) {
+  const user = await getUser(db, userId);
   if (!user || user.role !== 'participant') return null;
   const now = nowIso();
-  return db.transaction(() => {
-    if (selected) {
-      db.prepare('UPDATE users SET is_selected = 1, selected_at = ?, updated_at = ? WHERE id = ?').run(now, now, userId);
-      db.prepare("UPDATE registrations SET internal_status = 'selected', updated_at = ? WHERE user_id = ?").run(now, userId);
-      const r = autoAssignLink(db, { userId });
-      audit(db, actorId, 'participant.select', 'user', userId, r);
-      return r;
-    }
-    db.prepare('UPDATE users SET is_selected = 0, updated_at = ? WHERE id = ?').run(now, userId);
-    db.prepare("UPDATE registrations SET internal_status = 'released', updated_at = ? WHERE user_id = ?").run(now, userId);
-    const cancelled = cancelUpcomingOnDeselect(db, userId);
-    audit(db, actorId, 'participant.release', 'user', userId, { cancelled });
-    return { cancelled };
-  })();
+  if (selected) {
+    const res = await batch(db, [
+      stmt(db, 'UPDATE users SET is_selected = 1, selected_at = ?, updated_at = ? WHERE id = ?', now, now, userId),
+      stmt(db, "UPDATE registrations SET internal_status = 'selected', updated_at = ? WHERE user_id = ?", now, userId),
+      ...autoAssignStmts(db, { userId }),
+      auditStmt(db, actorId, 'participant.select', 'user', userId),
+    ]);
+    return { created: res[2].meta.changes, restored: res[3].meta.changes };
+  }
+  const res = await batch(db, [
+    stmt(db, 'UPDATE users SET is_selected = 0, updated_at = ? WHERE id = ?', now, userId),
+    stmt(db, "UPDATE registrations SET internal_status = 'released', updated_at = ? WHERE user_id = ?", now, userId),
+    cancelUpcomingStmt(db, userId),
+    auditStmt(db, actorId, 'participant.release', 'user', userId),
+  ]);
+  return { cancelled: res[2].meta.changes };
 }
+

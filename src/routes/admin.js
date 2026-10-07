@@ -1,308 +1,266 @@
-import express from 'express';
-import { checkLink, confirmLink, counselingView, getLink, syncStatus, unlink } from '../como/mapping.js';
-import { listAudit } from '../services/audit.js';
-import { adminCancelEnrollment, assignManual, autoAssignLink, EnrollError, recordAttendance } from '../services/enrollments.js';
+import { checkLink, comoOverview, confirmLink, counselingView, getLink, recheck, syncStatus, unlink } from '../como/mapping.js';
+import { get } from '../lib/db.js';
+import { audit, listAudit } from '../services/audit.js';
 import {
-  createProgram, createSession, getProgram, getSession, listPrograms, listSessions, parseProgramForm, parseSessionForm,
-  sessionRoster, updateProgram, updateSession,
+  adminCancelEnrollment, assignManual, autoAssignLink, EnrollError, enrollmentsOf, recordAttendance,
+} from '../services/enrollments.js';
+import {
+  createProgram, createSession, getProgram, getSession, linkProgramStats, listPrograms, listSessions, parseProgramForm,
+  parseSessionForm, sessionRoster, updateProgram, updateSession,
 } from '../services/programs.js';
 import {
   getRegistration, getUser, listConsents, listRegistrants, listSelectedParticipants, setInternalStatus, setSelected,
 } from '../services/users.js';
-import { audit } from '../services/audit.js';
 import * as views from '../views/admin.js';
-import { deny, intParam, render, requireManager, requireStaff } from './helpers.js';
+import { deny, field, fieldList, intParam, redirect, render, requireManager, requireStaff } from './helpers.js';
 
-export function adminRoutes({ db, como }) {
-  const r = express.Router();
-  r.use('/admin', requireStaff);
+export function adminRoutes(r) {
+  const staff = requireStaff;
+  const manager = requireManager;
 
-  r.get('/admin', (req, res) => {
-    const count = (sql, ...p) => db.prepare(sql).get(...p).n;
-    render(req, res, views.dashboardPage, {
-      received: count("SELECT COUNT(*) n FROM registrations WHERE internal_status IN ('received', 'reviewing')"),
-      selected: count("SELECT COUNT(*) n FROM users WHERE role = 'participant' AND is_selected = 1"),
-      programs: count('SELECT COUNT(*) n FROM programs'),
-      comoAttention: count("SELECT COUNT(*) n FROM como_links WHERE status IN ('conflict', 'error', 'needs_recheck')"),
+  r.get('/admin', staff, async (c) => {
+    const n = async (sql) => (await get(c.db, sql)).n;
+    return render(c, views.dashboardPage, {
+      received: await n("SELECT COUNT(*) n FROM registrations WHERE internal_status IN ('received', 'reviewing')"),
+      selected: await n("SELECT COUNT(*) n FROM users WHERE role = 'participant' AND is_selected = 1"),
+      programs: await n('SELECT COUNT(*) n FROM programs'),
+      comoAttention: await n("SELECT COUNT(*) n FROM como_links WHERE status IN ('conflict', 'error', 'needs_recheck')"),
     });
   });
 
   // ── 접수·선정 (전체 관리자) ──
-  r.get('/admin/participants', requireManager, (req, res) => {
-    const status = String(req.query.status || '');
-    render(req, res, views.participantsPage, { rows: listRegistrants(db, { status }), status });
+  r.get('/admin/participants', manager, async (c) => {
+    const status = c.query.get('status') || '';
+    return render(c, views.participantsPage, { rows: await listRegistrants(c.db, { status }), status });
   });
 
-  function participant(req, res) {
-    const id = intParam(req.params.id);
-    const user = id && getUser(db, id);
-    if (!user || user.role !== 'participant') {
-      deny(req, res, 404);
-      return null;
-    }
-    return user;
+  async function participant(c) {
+    const id = intParam(c.params.id);
+    const user = id && (await getUser(c.db, id));
+    return user && user.role === 'participant' ? user : null;
   }
 
-  r.get('/admin/participants/:id', requireManager, (req, res) => {
-    const user = participant(req, res);
-    if (!user) return;
-    render(req, res, views.participantPage, {
+  r.get('/admin/participants/:id', manager, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    return render(c, views.participantPage, {
       user,
-      registration: getRegistration(db, user.id),
-      consents: listConsents(db, user.id),
-      enrollments: db.prepare(`SELECT e.*, s.round_no, s.date, s.start_time, s.end_time, p.name AS program_name, a.status AS attendance
-        FROM enrollments e JOIN program_sessions s ON s.id = e.session_id JOIN programs p ON p.id = s.program_id
-        LEFT JOIN attendance a ON a.enrollment_id = e.id WHERE e.user_id = ?
-        ORDER BY s.date IS NULL, s.date`).all(user.id),
-      link: getLink(db, user.id),
-      comoConfigured: como.configured,
-      counseling: counselingView(db, como, user),
+      registration: await getRegistration(c.db, user.id),
+      consents: await listConsents(c.db, user.id),
+      enrollments: await enrollmentsOf(c.db, user.id),
+      link: await getLink(c.db, user.id),
+      comoConfigured: c.como.configured,
+      counseling: await counselingView(c.db, c.como, user),
     });
   });
 
-  r.post('/admin/participants/:id/select', requireManager, async (req, res) => {
-    const user = participant(req, res);
-    if (!user) return;
-    const selected = req.body.selected === '1';
-    const result = setSelected(db, req.user.id, user.id, selected);
-    if (selected && como.configured) await checkLink(db, como, getUser(db, user.id), req.user.id);
-    req.session.flash('ok', selected ? `선정했습니다. Link 배정 ${result.created + result.restored}건` : '선정을 해제했습니다.');
-    res.redirect(303, `/admin/participants/${user.id}`);
+  r.post('/admin/participants/:id/select', manager, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    const selected = field(c, 'selected') === '1';
+    const result = await setSelected(c.db, c.user.id, user.id, selected);
+    if (selected && c.como.configured) await checkLink(c.db, c.como, await getUser(c.db, user.id), c.user.id);
+    await c.session.flash('ok', selected ? `선정했습니다. Link 배정 ${result.created + result.restored}건` : '선정을 해제했습니다.');
+    return redirect(c, `/admin/participants/${user.id}`);
   });
 
-  r.post('/admin/participants/:id/status', requireManager, (req, res) => {
-    const user = participant(req, res);
-    if (!user) return;
-    const ok = setInternalStatus(db, req.user.id, user.id, String(req.body.status || ''));
-    req.session.flash(ok ? 'ok' : 'error', ok ? '저장되었습니다.' : '변경할 수 없는 상태입니다.');
-    res.redirect(303, `/admin/participants/${user.id}`);
+  r.post('/admin/participants/:id/status', manager, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    const ok = await setInternalStatus(c.db, c.user.id, user.id, field(c, 'status'));
+    await c.session.flash(ok ? 'ok' : 'error', ok ? '저장되었습니다.' : '변경할 수 없는 상태입니다.');
+    return redirect(c, `/admin/participants/${user.id}`);
   });
 
   // ── 프로그램·회차 ──
-  function programList() {
-    return db.prepare(`SELECT p.*, (SELECT COUNT(*) FROM program_sessions s WHERE s.program_id = p.id) AS session_count
-      FROM programs p ORDER BY CASE theme WHEN 'L' THEN 1 WHEN 'O' THEN 2 WHEN 'G' THEN 3 ELSE 4 END, sort_order, id`).all();
+  r.get('/admin/programs', staff, async (c) => render(c, views.programsPage, await listPrograms(c.db)));
+
+  r.get('/admin/programs/new', staff, (c) => render(c, views.programNewPage, { values: { theme: 'G', assign_mode: 'select', is_public: 1 } }));
+
+  r.post('/admin/programs/new', staff, async (c) => {
+    const { value, errors } = parseProgramForm(c.body);
+    if (Object.keys(errors).length) return render(c, views.programNewPage, { values: value, errors }, 422);
+    const id = await createProgram(c.db, c.user.id, value);
+    await c.session.flash('ok', '추가되었습니다.');
+    return redirect(c, `/admin/programs/${id}`);
+  });
+
+  async function program(c) {
+    const id = intParam(c.params.id);
+    return (id && (await getProgram(c.db, id))) || null;
   }
 
-  r.get('/admin/programs', (req, res) => render(req, res, views.programsPage, programList()));
-
-  r.get('/admin/programs/new', (req, res) => {
-    render(req, res, views.programNewPage, { values: { theme: 'G', assign_mode: 'select', is_public: 1 } });
+  r.get('/admin/programs/:id', staff, async (c) => {
+    const p = await program(c);
+    if (!p) return deny(c, 404);
+    return render(c, views.programPage, { program: p, sessions: await listSessions(c.db, p.id) });
   });
 
-  r.post('/admin/programs/new', (req, res) => {
-    const { value, errors } = parseProgramForm(req.body);
-    if (Object.keys(errors).length) return render(req, res, views.programNewPage, { values: value, errors }, 422);
-    const id = createProgram(db, req.user.id, value);
-    req.session.flash('ok', '추가되었습니다.');
-    res.redirect(303, `/admin/programs/${id}`);
-  });
-
-  function program(req, res) {
-    const id = intParam(req.params.id);
-    const p = id && getProgram(db, id);
-    if (!p) deny(req, res, 404);
-    return p || null;
-  }
-
-  r.get('/admin/programs/:id', (req, res) => {
-    const p = program(req, res);
-    if (!p) return;
-    render(req, res, views.programPage, { program: p, sessions: listSessions(db, p.id) });
-  });
-
-  r.post('/admin/programs/:id', (req, res) => {
-    const p = program(req, res);
-    if (!p) return;
-    const { value, errors } = parseProgramForm({ ...req.body, assign_mode: p.assign_mode });
+  r.post('/admin/programs/:id', staff, async (c) => {
+    const p = await program(c);
+    if (!p) return deny(c, 404);
+    const { value, errors } = parseProgramForm({ ...c.body, assign_mode: p.assign_mode });
     if (Object.keys(errors).length) {
-      return render(req, res, views.programPage, { program: p, sessions: listSessions(db, p.id), values: { ...value, assign_mode: p.assign_mode }, errors }, 422);
+      return render(c, views.programPage, { program: p, sessions: await listSessions(c.db, p.id), values: value, errors }, 422);
     }
-    updateProgram(db, req.user.id, p.id, value);
-    req.session.flash('ok', '저장되었습니다.');
-    res.redirect(303, `/admin/programs/${p.id}`);
+    await updateProgram(c.db, c.user.id, p.id, value);
+    await c.session.flash('ok', '저장되었습니다.');
+    return redirect(c, `/admin/programs/${p.id}`);
   });
 
-  r.post('/admin/programs/:id/sessions', (req, res) => {
-    const p = program(req, res);
-    if (!p) return;
-    if (p.assign_mode === 'external') return deny(req, res, 400, '꼬모에서 관리하는 프로그램입니다.');
-    const { value, errors } = parseSessionForm(req.body);
+  r.post('/admin/programs/:id/sessions', staff, async (c) => {
+    const p = await program(c);
+    if (!p) return deny(c, 404);
+    if (p.assign_mode === 'external') return deny(c, 400, '꼬모에서 관리하는 프로그램입니다.');
+    const { value, errors } = parseSessionForm(c.body);
     if (Object.keys(errors).length) {
-      return render(req, res, views.programPage, { program: p, sessions: listSessions(db, p.id), sessionValues: value, sessionErrors: errors }, 422);
+      return render(c, views.programPage, { program: p, sessions: await listSessions(c.db, p.id), sessionValues: value, sessionErrors: errors }, 422);
     }
-    createSession(db, req.user.id, p.id, value);
-    req.session.flash('ok', '회차가 추가되었습니다.');
-    res.redirect(303, `/admin/programs/${p.id}`);
+    await createSession(c.db, c.user.id, p.id, value);
+    await c.session.flash('ok', '회차가 추가되었습니다.');
+    return redirect(c, `/admin/programs/${p.id}`);
   });
 
-  function session(req, res) {
-    const id = intParam(req.params.id);
-    const s = id && getSession(db, id);
-    if (!s) deny(req, res, 404);
-    return s || null;
+  async function session(c) {
+    const id = intParam(c.params.id);
+    return (id && (await getSession(c.db, id))) || null;
   }
 
-  function sessionProps(s) {
-    const roster = sessionRoster(db, s.id);
+  async function sessionProps(c, s) {
+    const roster = await sessionRoster(c.db, s.id);
     const enrolled = new Set(roster.filter((x) => x.status === 'active').map((x) => x.user_id));
     return {
       session: s,
       roster,
-      candidates: s.assign_mode === 'manual' ? listSelectedParticipants(db).filter((u) => !enrolled.has(u.id)) : [],
+      candidates: s.assign_mode === 'manual' ? (await listSelectedParticipants(c.db)).filter((u) => !enrolled.has(u.id)) : [],
     };
   }
 
-  r.get('/admin/sessions/:id', (req, res) => {
-    const s = session(req, res);
-    if (!s) return;
-    render(req, res, views.sessionPage, sessionProps(s));
+  r.get('/admin/sessions/:id', staff, async (c) => {
+    const s = await session(c);
+    if (!s) return deny(c, 404);
+    return render(c, views.sessionPage, await sessionProps(c, s));
   });
 
-  r.post('/admin/sessions/:id', (req, res) => {
-    const s = session(req, res);
-    if (!s) return;
-    const { value, errors } = parseSessionForm(req.body);
-    if (Object.keys(errors).length) return render(req, res, views.sessionPage, { ...sessionProps(s), values: value, errors }, 422);
-    updateSession(db, req.user.id, s.id, value);
-    req.session.flash('ok', '저장되었습니다.');
-    res.redirect(303, `/admin/sessions/${s.id}`);
+  r.post('/admin/sessions/:id', staff, async (c) => {
+    const s = await session(c);
+    if (!s) return deny(c, 404);
+    const { value, errors } = parseSessionForm(c.body);
+    if (Object.keys(errors).length) return render(c, views.sessionPage, { ...(await sessionProps(c, s)), values: value, errors }, 422);
+    await updateSession(c.db, c.user.id, s.id, value);
+    await c.session.flash('ok', '저장되었습니다.');
+    return redirect(c, `/admin/sessions/${s.id}`);
   });
 
-  r.post('/admin/sessions/:id/assign', (req, res) => {
-    const s = session(req, res);
-    if (!s) return;
-    const ids = [].concat(req.body.user_id || []).map(intParam).filter(Boolean);
+  r.post('/admin/sessions/:id/assign', staff, async (c) => {
+    const s = await session(c);
+    if (!s) return deny(c, 404);
+    const ids = fieldList(c, 'user_id').map(intParam).filter(Boolean);
     try {
-      const n = assignManual(db, req.user.id, s.id, ids);
-      req.session.flash('ok', `${n}명 배정했습니다.`);
+      const n = await assignManual(c.db, c.user.id, s.id, ids);
+      await c.session.flash('ok', `${n}명 배정했습니다.`);
     } catch (err) {
       if (!(err instanceof EnrollError)) throw err;
-      req.session.flash('error', '배정할 수 없는 회차입니다.');
+      await c.session.flash('error', '배정할 수 없는 회차입니다.');
     }
-    res.redirect(303, `/admin/sessions/${s.id}`);
+    return redirect(c, `/admin/sessions/${s.id}`);
   });
 
-  function enrollmentSession(req, res) {
-    const id = intParam(req.params.id);
-    const e = id && db.prepare('SELECT * FROM enrollments WHERE id = ?').get(id);
-    if (!e) deny(req, res, 404);
-    return e || null;
+  async function enrollment(c) {
+    const id = intParam(c.params.id);
+    return (id && (await get(c.db, 'SELECT * FROM enrollments WHERE id = ?', id))) || null;
   }
 
-  r.post('/admin/enrollments/:id/attendance', (req, res) => {
-    const e = enrollmentSession(req, res);
-    if (!e) return;
+  r.post('/admin/enrollments/:id/attendance', staff, async (c) => {
+    const e = await enrollment(c);
+    if (!e) return deny(c, 404);
     try {
-      recordAttendance(db, req.user.id, e.id, String(req.body.status ?? ''));
-      req.session.flash('ok', '출석을 저장했습니다.');
+      await recordAttendance(c.db, c.user.id, e.id, field(c, 'status'));
+      await c.session.flash('ok', '출석을 저장했습니다.');
     } catch (err) {
       if (!(err instanceof EnrollError)) throw err;
-      req.session.flash('error', '저장할 수 없습니다.');
+      await c.session.flash('error', '저장할 수 없습니다.');
     }
-    res.redirect(303, `/admin/sessions/${e.session_id}`);
+    return redirect(c, `/admin/sessions/${e.session_id}`);
   });
 
-  r.post('/admin/enrollments/:id/cancel', (req, res) => {
-    const e = enrollmentSession(req, res);
-    if (!e) return;
-    const attended = db.prepare('SELECT 1 FROM attendance WHERE enrollment_id = ?').get(e.id);
-    if (attended) req.session.flash('error', '출석 기록이 있어 취소할 수 없습니다.');
-    else req.session.flash('ok', adminCancelEnrollment(db, req.user.id, e.id) ? '취소했습니다.' : '이미 취소된 신청입니다.');
-    res.redirect(303, `/admin/sessions/${e.session_id}`);
+  r.post('/admin/enrollments/:id/cancel', staff, async (c) => {
+    const e = await enrollment(c);
+    if (!e) return deny(c, 404);
+    const changed = await adminCancelEnrollment(c.db, c.user.id, e.id);
+    await c.session.flash(changed ? 'ok' : 'error', changed ? '취소했습니다.' : '취소할 수 없습니다(출석 기록이 있거나 이미 취소됨).');
+    return redirect(c, `/admin/sessions/${e.session_id}`);
   });
 
   // ── Link 자동 배정 ──
-  function linkPrograms() {
-    return db.prepare(`SELECT p.id, p.name,
-        (SELECT COUNT(*) FROM program_sessions s WHERE s.program_id = p.id AND s.is_cancelled = 0) AS session_count,
-        (SELECT COUNT(*) FROM enrollments e JOIN program_sessions s ON s.id = e.session_id
-          WHERE s.program_id = p.id AND e.status = 'active') AS enrollment_count
-      FROM programs p WHERE p.assign_mode = 'auto' ORDER BY p.sort_order`).all();
-  }
+  r.get('/admin/link', staff, async (c) => render(c, views.linkPage, { programs: await linkProgramStats(c.db) }));
 
-  r.get('/admin/link', (req, res) => render(req, res, views.linkPage, { programs: linkPrograms() }));
-
-  r.post('/admin/link/run', (req, res) => {
-    const result = autoAssignLink(db);
-    audit(db, req.user.id, 'link.auto_assign', 'program', null, result);
-    render(req, res, views.linkPage, { programs: linkPrograms(), result });
+  r.post('/admin/link/run', staff, async (c) => {
+    const result = await autoAssignLink(c.db);
+    await audit(c.db, c.user.id, 'link.auto_assign', 'program', null, result);
+    return render(c, views.linkPage, { programs: await linkProgramStats(c.db), result });
   });
 
   // ── 꼬모 연동 (전체 관리자) ──
-  r.get('/admin/como', requireManager, (req, res) => {
-    render(req, res, views.comoPage, {
-      adapter: como,
-      applyUrl: req.app.locals.cfg.comoApplyUrl,
-      rows: db.prepare(`SELECT u.id, u.name, u.phone, l.status, l.detail, l.checked_at FROM users u
-        LEFT JOIN como_links l ON l.user_id = u.id WHERE u.role = 'participant' AND u.is_selected = 1
-        ORDER BY CASE l.status WHEN 'conflict' THEN 0 WHEN 'error' THEN 1 WHEN 'needs_recheck' THEN 2 ELSE 3 END, u.name`).all(),
-      logs: db.prepare(`SELECT g.*, u.name FROM como_sync_log g LEFT JOIN users u ON u.id = g.user_id
-        ORDER BY g.id DESC LIMIT 100`).all(),
-    });
+  r.get('/admin/como', manager, async (c) => {
+    const [rows, logs] = await comoOverview(c.db);
+    return render(c, views.comoPage, { adapter: c.como, applyUrl: c.cfg.comoApplyUrl, rows, logs });
   });
 
-  function requireComo(req, res, next) {
-    if (!como.configured) return deny(req, res, 409, '꼬모 연동이 설정되지 않았습니다.');
-    next();
-  }
+  const comoReady = (c) => (c.como.configured ? null : deny(c, 409, '꼬모 연동이 설정되지 않았습니다.'));
 
-  r.post('/admin/como/check-all', requireManager, requireComo, async (req, res) => {
+  r.post('/admin/como/check-all', manager, comoReady, async (c) => {
     const counts = {};
-    for (const u of listSelectedParticipants(db)) {
-      const result = await checkLink(db, como, u, req.user.id);
+    for (const u of await listSelectedParticipants(c.db)) {
+      const result = await checkLink(c.db, c.como, u, c.user.id);
       counts[result] = (counts[result] || 0) + 1;
     }
-    req.session.flash('ok', `확인 완료: ${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ') || '대상 없음'}`);
-    res.redirect(303, '/admin/como');
+    await c.session.flash('ok', `확인 완료: ${Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ') || '대상 없음'}`);
+    return redirect(c, '/admin/como');
   });
 
-  r.post('/admin/como/sync-all', requireManager, requireComo, async (req, res) => {
+  r.post('/admin/como/sync-all', manager, comoReady, async (c) => {
     let ok = 0;
     let failed = 0;
-    for (const u of listSelectedParticipants(db)) {
-      const result = await syncStatus(db, como, u);
+    for (const u of await listSelectedParticipants(c.db)) {
+      const result = await syncStatus(c.db, c.como, u);
       if (result === 'ok') ok += 1;
       else if (result === 'error') failed += 1;
     }
-    req.session.flash(failed ? 'error' : 'ok', `갱신 ${ok}건${failed ? ` · 실패 ${failed}건` : ''}`);
-    res.redirect(303, '/admin/como');
+    await c.session.flash(failed ? 'error' : 'ok', `갱신 ${ok}건${failed ? ` · 실패 ${failed}건` : ''}`);
+    return redirect(c, '/admin/como');
   });
 
-  r.post('/admin/como/:id/check', requireManager, requireComo, async (req, res) => {
-    const user = participant(req, res);
-    if (!user) return;
-    // 재확인은 기존 연결을 무시하고 새로 조회한다.
-    db.prepare("UPDATE como_links SET status = 'needs_recheck' WHERE user_id = ? AND status = 'linked'").run(user.id);
-    await checkLink(db, como, user, req.user.id);
-    res.redirect(303, `/admin/participants/${user.id}`);
+  r.post('/admin/como/:id/check', manager, comoReady, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    await recheck(c.db, c.como, user, c.user.id);
+    return redirect(c, `/admin/participants/${user.id}`);
   });
 
-  r.post('/admin/como/:id/sync', requireManager, requireComo, async (req, res) => {
-    const user = participant(req, res);
-    if (!user) return;
-    const result = await syncStatus(db, como, user);
-    req.session.flash(result === 'ok' ? 'ok' : 'error', result === 'ok' ? '갱신했습니다.' : '갱신하지 못했습니다.');
-    res.redirect(303, `/admin/participants/${user.id}`);
+  r.post('/admin/como/:id/sync', manager, comoReady, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    const result = await syncStatus(c.db, c.como, user);
+    await c.session.flash(result === 'ok' ? 'ok' : 'error', result === 'ok' ? '갱신했습니다.' : '갱신하지 못했습니다.');
+    return redirect(c, `/admin/participants/${user.id}`);
   });
 
-  r.post('/admin/como/:id/confirm', requireManager, requireComo, async (req, res) => {
-    const user = participant(req, res);
-    if (!user) return;
-    const result = await confirmLink(db, como, user, String(req.body.external_id || ''), req.user.id);
-    req.session.flash(result === 'linked' ? 'ok' : 'error', result === 'linked' ? '연결했습니다.' : '연결할 수 없습니다.');
-    res.redirect(303, `/admin/participants/${user.id}`);
+  r.post('/admin/como/:id/confirm', manager, comoReady, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    const result = await confirmLink(c.db, c.como, user, field(c, 'external_id'), c.user.id);
+    await c.session.flash(result === 'linked' ? 'ok' : 'error', result === 'linked' ? '연결했습니다.' : '연결할 수 없습니다.');
+    return redirect(c, `/admin/participants/${user.id}`);
   });
 
-  r.post('/admin/como/:id/unlink', requireManager, requireComo, (req, res) => {
-    const user = participant(req, res);
-    if (!user) return;
-    unlink(db, user.id, req.user.id);
-    req.session.flash('ok', '연결을 해제했습니다.');
-    res.redirect(303, `/admin/participants/${user.id}`);
+  r.post('/admin/como/:id/unlink', manager, comoReady, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    await unlink(c.db, user.id, c.user.id);
+    await c.session.flash('ok', '연결을 해제했습니다.');
+    return redirect(c, `/admin/participants/${user.id}`);
   });
 
-  r.get('/admin/audit', requireManager, (req, res) => render(req, res, views.auditPage, listAudit(db)));
-
-  return r;
+  r.get('/admin/audit', manager, async (c) => render(c, views.auditPage, await listAudit(c.db)));
 }

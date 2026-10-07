@@ -1,5 +1,6 @@
+import { all, batch, get, run, stmt } from '../lib/db.js';
 import { isValidDate, isValidTime, nowIso } from '../lib/time.js';
-import { audit } from './audit.js';
+import { audit, auditStmt } from './audit.js';
 import { autoAssignLink } from './enrollments.js';
 
 export const ASSIGN_MODES = {
@@ -13,16 +14,16 @@ export const ASSIGN_MODES = {
 const THEME_ORDER = "CASE theme WHEN 'L' THEN 1 WHEN 'O' THEN 2 WHEN 'G' THEN 3 ELSE 4 END";
 
 export function listPrograms(db, { publicOnly = false } = {}) {
-  return db.prepare(`SELECT * FROM programs ${publicOnly ? 'WHERE is_public = 1' : ''}
-    ORDER BY ${THEME_ORDER}, sort_order, id`).all();
+  return all(db, `SELECT p.*, (SELECT COUNT(*) FROM program_sessions s WHERE s.program_id = p.id) AS session_count
+    FROM programs p ${publicOnly ? 'WHERE is_public = 1' : ''} ORDER BY ${THEME_ORDER}, sort_order, id`);
 }
 
 export function getProgram(db, id) {
-  return db.prepare('SELECT * FROM programs WHERE id = ?').get(id);
+  return get(db, 'SELECT * FROM programs WHERE id = ?', id);
 }
 
 export function getProgramByCode(db, code) {
-  return db.prepare('SELECT * FROM programs WHERE code = ?').get(code);
+  return get(db, 'SELECT * FROM programs WHERE code = ?', code);
 }
 
 export function groupByTheme(programs) {
@@ -52,35 +53,37 @@ export function parseProgramForm(body) {
   return { value: p, errors };
 }
 
-export function createProgram(db, actorId, p) {
+export async function createProgram(db, actorId, p) {
   const now = nowIso();
-  const id = Number(db.prepare(`INSERT INTO programs (theme, name, detail, schedule_label, assign_mode, is_public, self_cancel,
-    sort_order, created_at, updated_at) VALUES (@theme, @name, @detail, @schedule_label, @assign_mode, @is_public, @self_cancel,
-    (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM programs), @now, @now)`).run({ ...p, now }).lastInsertRowid);
-  audit(db, actorId, 'program.create', 'program', id, p);
-  return id;
+  const meta = await run(db, `INSERT INTO programs (theme, name, detail, schedule_label, assign_mode, is_public, self_cancel,
+    sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM programs), ?, ?)`,
+  p.theme, p.name, p.detail, p.schedule_label, p.assign_mode, p.is_public, p.self_cancel, now, now);
+  await audit(db, actorId, 'program.create', 'program', meta.last_row_id, p);
+  return meta.last_row_id;
 }
 
 /** 배정 방식은 생성 후 바꾸지 않는다(기존 배정·신청 기록과 어긋나지 않도록). */
-export function updateProgram(db, actorId, id, p) {
-  db.prepare(`UPDATE programs SET theme = @theme, name = @name, detail = @detail, schedule_label = @schedule_label,
-    is_public = @is_public, self_cancel = @self_cancel, updated_at = @now WHERE id = @id`).run({ ...p, id, now: nowIso() });
-  audit(db, actorId, 'program.update', 'program', id, p);
+export async function updateProgram(db, actorId, id, p) {
+  await batch(db, [
+    stmt(db, `UPDATE programs SET theme = ?, name = ?, detail = ?, schedule_label = ?, is_public = ?, self_cancel = ?, updated_at = ?
+      WHERE id = ?`, p.theme, p.name, p.detail, p.schedule_label, p.is_public, p.self_cancel, nowIso(), id),
+    auditStmt(db, actorId, 'program.update', 'program', id, p),
+  ]);
 }
 
 // ── 회차 ───────────────────────────────────────────────
 
 export function listSessions(db, programId) {
-  return db.prepare(`SELECT s.*,
+  return all(db, `SELECT s.*,
       (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND e.status = 'active') AS active_count
     FROM program_sessions s WHERE s.program_id = ?
-    ORDER BY s.date IS NULL, s.date, s.start_time, s.round_no, s.id`).all(programId);
+    ORDER BY s.date IS NULL, s.date, s.start_time, s.round_no, s.id`, programId);
 }
 
 export function getSession(db, id) {
-  return db.prepare(`SELECT s.*, p.name AS program_name, p.theme, p.assign_mode, p.detail AS program_detail, p.self_cancel,
+  return get(db, `SELECT s.*, p.name AS program_name, p.theme, p.assign_mode, p.detail AS program_detail, p.self_cancel,
       (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND e.status = 'active') AS active_count
-    FROM program_sessions s JOIN programs p ON p.id = s.program_id WHERE s.id = ?`).get(id);
+    FROM program_sessions s JOIN programs p ON p.id = s.program_id WHERE s.id = ?`, id);
 }
 
 /** 회차 입력값 검증. 비어 있는 날짜·시간·장소·정원은 NULL(미정)로 둔다. */
@@ -113,33 +116,43 @@ export function parseSessionForm(body) {
   return { value: s, errors };
 }
 
-/** 회차 생성. Link(auto) 프로그램이면 선정된 참여자에게 바로 배정한다. */
-export function createSession(db, actorId, programId, s) {
+/**
+ * 회차 생성. Link(auto) 프로그램이면 선정된 참여자에게 바로 배정한다.
+ * 배정은 재실행해도 중복되지 않으므로, 중간에 실패하면 'Link 배정'에서 다시 실행하면 된다.
+ */
+export async function createSession(db, actorId, programId, s) {
   const now = nowIso();
-  return db.transaction(() => {
-    const id = Number(db.prepare(`INSERT INTO program_sessions (program_id, round_no, date, start_time, end_time, place, capacity,
-      is_closed, is_cancelled, created_at, updated_at) VALUES (@program_id, @round_no, @date, @start_time, @end_time, @place,
-      @capacity, @is_closed, @is_cancelled, @now, @now)`).run({ ...s, program_id: programId, now }).lastInsertRowid);
-    const program = getProgram(db, programId);
-    const assigned = program.assign_mode === 'auto' ? autoAssignLink(db, { sessionId: id }) : null;
-    audit(db, actorId, 'session.create', 'session', id, { programId, ...s, assigned });
-    return id;
-  })();
+  const meta = await run(db, `INSERT INTO program_sessions (program_id, round_no, date, start_time, end_time, place, capacity,
+    is_closed, is_cancelled, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  programId, s.round_no, s.date, s.start_time, s.end_time, s.place, s.capacity, s.is_closed, s.is_cancelled, now, now);
+  const id = meta.last_row_id;
+  const program = await getProgram(db, programId);
+  const assigned = program.assign_mode === 'auto' ? await autoAssignLink(db, { sessionId: id }) : null;
+  await audit(db, actorId, 'session.create', 'session', id, { programId, ...s, assigned });
+  return id;
 }
 
-export function updateSession(db, actorId, id, s) {
-  db.transaction(() => {
-    db.prepare(`UPDATE program_sessions SET round_no = @round_no, date = @date, start_time = @start_time, end_time = @end_time,
-      place = @place, capacity = @capacity, is_closed = @is_closed, is_cancelled = @is_cancelled, updated_at = @now
-      WHERE id = @id`).run({ ...s, id, now: nowIso() });
-    const session = getSession(db, id);
-    if (session.assign_mode === 'auto' && !session.is_cancelled) autoAssignLink(db, { sessionId: id });
-    audit(db, actorId, 'session.update', 'session', id, s);
-  })();
+export async function updateSession(db, actorId, id, s) {
+  await batch(db, [
+    stmt(db, `UPDATE program_sessions SET round_no = ?, date = ?, start_time = ?, end_time = ?, place = ?, capacity = ?,
+      is_closed = ?, is_cancelled = ?, updated_at = ? WHERE id = ?`,
+    s.round_no, s.date, s.start_time, s.end_time, s.place, s.capacity, s.is_closed, s.is_cancelled, nowIso(), id),
+    auditStmt(db, actorId, 'session.update', 'session', id, s),
+  ]);
+  const session = await getSession(db, id);
+  if (session.assign_mode === 'auto' && !session.is_cancelled) await autoAssignLink(db, { sessionId: id });
 }
 
 export function sessionRoster(db, sessionId) {
-  return db.prepare(`SELECT e.*, u.name, u.phone, u.is_selected, a.status AS attendance
+  return all(db, `SELECT e.*, u.name, u.phone, u.is_selected, a.status AS attendance
     FROM enrollments e JOIN users u ON u.id = e.user_id LEFT JOIN attendance a ON a.enrollment_id = e.id
-    WHERE e.session_id = ? ORDER BY e.status, u.name`).all(sessionId);
+    WHERE e.session_id = ? ORDER BY e.status, u.name`, sessionId);
+}
+
+export function linkProgramStats(db) {
+  return all(db, `SELECT p.id, p.name,
+      (SELECT COUNT(*) FROM program_sessions s WHERE s.program_id = p.id AND s.is_cancelled = 0) AS session_count,
+      (SELECT COUNT(*) FROM enrollments e JOIN program_sessions s ON s.id = e.session_id
+        WHERE s.program_id = p.id AND e.status = 'active') AS enrollment_count
+    FROM programs p WHERE p.assign_mode = 'auto' ORDER BY p.sort_order`);
 }
