@@ -11,10 +11,12 @@ public/                  Pages 정적 출력 디렉터리 (build output director
   _routes.json           /static/* 은 정적 파일, 나머지는 Functions
 functions/
   [[path]].js            Pages Functions 진입점(모든 경로) → src/app.js
-migrations/              D1 스키마(0001)·프로그램 기본 목록(0002)·주소/생년월일(0003)·PIN 로그인(0004)
+migrations/              D1 스키마(0001)·프로그램 기본 목록(0002)·주소/생년월일(0003)·PIN 로그인(0004)·우편번호/상세 주소(0005)
+.github/workflows/ci.yml  PR·main 테스트
 src/
   app.js                 요청 처리(라우팅·세션·CSRF·보안 헤더)
   config.js, site.js     환경 변수 설정·기관 정보
+  db/                    배포 후 자동 마이그레이션(migrate.js, migrations.generated.js)
   lib/                   D1 도우미, 세션, PIN 해시, Web Crypto, 전화번호 정규화, 자동 이스케이프 템플릿, 라우터
   services/              등록·선정, 로그인 시도 제한, 프로그램·회차, Link 자동 배정, Grow 신청, 출석, 감사기록
   como/                  꼬모 연동 어댑터 인터페이스, 전화번호 매핑
@@ -24,7 +26,7 @@ test/                    자동 테스트
 ```
 
 - 런타임 의존성은 없다(라우터·템플릿 자체 구현, Web Crypto 사용). 빌드 단계도 없다.
-- 화면은 모두 서버(Functions)에서 렌더링하고 클라이언트 JS는 없다(CSP `script-src 'none'`).
+- 화면은 모두 서버(Functions)에서 렌더링한다. 클라이언트 JS는 주소 검색(등록·내 정보 화면)뿐이다.
 - D1은 대화형 트랜잭션이 없으므로 여러 쓰기는 `batch`(원자적)로, 정원 확인 신청은 단일 조건부 SQL로 처리한다.
 
 ## Cloudflare Pages 설정
@@ -33,11 +35,7 @@ test/                    자동 테스트
 (Pages 프로젝트에 `wrangler.toml`이 있으면 그 파일이 우선해 대시보드 바인딩을 쓸 수 없다).
 
 1. **D1 생성**: Workers & Pages → D1 → Create → 이름 `login-db`. 생성 후 database ID를 확인한다.
-2. **스키마 적용**(로컬 PC에서, `npx wrangler login` 후):
-   ```bash
-   npm install
-   npm run db:migrate:remote -- --id <database ID>
-   ```
+2. **스키마**: 따로 적용할 필요 없음. 배포된 앱이 첫 요청에서 `migrations/`를 자동 적용한다(아래 '배포 흐름').
 3. **Pages 프로젝트 → Settings → Build**
    | 항목 | 값 |
    |---|---|
@@ -51,7 +49,7 @@ test/                    자동 테스트
    | 이름 | 종류 | 값 |
    |---|---|---|
    | `SESSION_SECRET` | Secret | 32자 이상 무작위 문자열 (예: `openssl rand -base64 48`) |
-   | `CONSENT_JSON` | Secret 또는 Text | 기관 확정 동의문 JSON (`content/consent.example.json` 형식). 없으면 필수 동의 1개(수집 항목만 표시)를 받고 문안 버전을 `미확정`으로 기록 |
+   | `CONSENT_JSON` | Text | 선택. 기본 동의문(`src/content/consent.js`) 대신 쓸 문안 JSON (`content/consent.example.json` 형식) |
    | `COMO_APPLY_URL` | Text | 선택. 기본 `https://cco-mho.pages.dev/` |
 6. **재배포**(Deployments → Retry deployment). 바인딩·변수는 재배포 후 적용된다.
 7. **관리자 계정**: 아래 '관리자 지정' 참고
@@ -64,6 +62,11 @@ test/                    자동 테스트
 - 번호별 30분 내 5회 실패 시 잠금, IP별 1시간 내 30회 실패 시 차단. 실패 문구는 등록 여부와 무관하게 같다.
 - **PIN 분실**: 관리자 → 참여자 상세 → `PIN 초기화` → 화면에 한 번 표시되는 임시 PIN을 본인 확인 후 전달 → 첫 로그인 때 새 PIN 설정(그 전에는 다른 화면 이용 불가).
 - **연락처 확인**: 문자 인증이 없으므로 등록한 번호는 '미확인'이다. 선정 시(대면 초기상담 후) 자동으로 확인 처리되며, 번호를 바꾸면 다시 미확인이 된다(참여자 상세 → `연락처 확인`). 꼬모 매핑은 확인된 번호만 사용한다.
+
+### 주소 입력
+
+등록·내 정보 화면에서 카카오(다음) 우편번호 서비스로 도로명 주소를 검색한다(무료, 키 불필요). 우편번호·도로명 주소·상세 주소를 따로 저장한다.
+검색 스크립트를 불러오지 못하면 검색 버튼은 숨겨지고 주소를 직접 입력한다. CSP는 `t1.daumcdn.net`·`t1.kakaocdn.net` 스크립트와 `postcode.map.daum.net`·`postcode.map.kakao.com` 검색 창만 허용한다.
 
 ### 관리자 지정
 
@@ -86,8 +89,19 @@ test/                    자동 테스트
 | `COMO_ADAPTER` | `none` | `mock`은 개발 전용, 운영에서 사용 불가 |
 | `COMO_MOCK_JSON` | - | 개발용 꼬모 모의 데이터 |
 | `COMO_APPLY_URL` | `https://cco-mho.pages.dev/` | 상담신청하기 이동 주소 |
-| `CONSENT_JSON` | - | 기관 확정 동의문 |
+| `CONSENT_JSON` | - | 기본 동의문 대신 쓸 문안 |
 | `SESSION_IDLE_DAYS` / `SESSION_MAX_DAYS` | 14 / 60 | 로그인 유지 기간 |
+
+## 배포 흐름 (자동)
+
+1. 변경은 브랜치 → PR로 올린다. GitHub Actions(`.github/workflows/ci.yml`)가 테스트(일반 + 로컬 D1)와 Functions 번들을 확인한다.
+2. PR을 `main`에 머지하면 Cloudflare Pages Git 연동이 자동 배포한다.
+3. 배포된 앱이 첫 요청에서 아직 적용되지 않은 D1 마이그레이션을 적용한다(`src/db/migrate.js`).
+   - wrangler와 같은 `d1_migrations` 테이블을 쓰므로 CLI(`npm run db:migrate:remote`)와 섞어 써도 중복 적용되지 않는다.
+   - 마이그레이션마다 기록과 함께 하나의 batch(트랜잭션)로 실행되고, 동시 요청이 있어도 한 번만 적용된다.
+   - 실패하면 해당 마이그레이션 전체가 되돌려지고, 화면에 "데이터베이스 준비 중 오류"가 표시된다.
+4. 마이그레이션을 추가할 때: `migrations/000N_설명.sql` 작성 → `npm run build:migrations` → 커밋.
+   기존 버전 코드가 잠시 함께 돌 수 있으므로, 가능하면 컬럼 추가 위주로 작성하고 삭제는 다음 배포로 미룬다.
 
 ## 로컬 개발
 
@@ -120,7 +134,8 @@ npm run dev        # wrangler pages dev (workerd + 로컬 D1) http://localhost:8
 
 ## 미확정 사항 (기관 확인 필요)
 
-- 동의문·보관기간·개인정보보호책임자 → `CONSENT_JSON`. 미설정 상태로 받은 동의는 문안 버전 `미확정`으로 기록되므로 확정 후 다시 받는다.
+- 개인정보 수집·이용 동의문: 기본 문안(`src/content/consent.js`, 버전 `2026-10-07`) 사용 중. **보유 기간(사업 종료 후 5년)과 문의처는 기관 확인 필요.** 문안을 바꾸면 `version`도 바꾼다(동의 이력에 버전이 기록됨).
+- 꼬모 회차 연동이 실제로 연결되면 꼬모 측에 전화번호를 보내 조회하게 되므로, 별도의 제3자 제공 동의가 필요한지 확인한다.
 - 꼬모 연동 인터페이스·통합 로그인 지원 여부.
 - 오픈채팅 URL(미제공, 링크 없음), 공지 기능(범위 외).
 - 프로그램별 실제 날짜·시간·장소·정원(관리자 화면에서 입력, 비어 있으면 '일정 미정').

@@ -64,7 +64,8 @@ export function authRoutes(r) {
     }
     await recordAttempt(db, { kind: 'register', phone, ip: c.ip, success: true });
     const userId = await registerUser(db, {
-      name: value.name, phone, address: value.address, birthDate: value.birth_date,
+      name: value.name, phone, address: value.address, addressDetail: value.address_detail, postcode: value.postcode,
+      birthDate: value.birth_date,
       pinHash: await hashPin(cfg.sessionSecret, pin), consent, agreedKeys: agreed,
     });
     if (!userId) {

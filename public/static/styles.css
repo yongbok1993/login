@@ -18,6 +18,7 @@
   --body:'Noto Sans KR', sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
+[hidden]{display:none !important}
 html{-webkit-text-size-adjust:100%}
 body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.7;min-height:100vh;display:flex;flex-direction:column}
 main{flex:1}
@@ -235,3 +236,13 @@ footer b{color:#DDE3DE;font-weight:500}
   dl.summary dd{margin-bottom:8px}
   .page-title{font-size:24px}
 }
+
+/* 주소 검색 */
+.address-row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.address-row .postcode{width:9em;flex:none;font:inherit;font-size:16px;padding:12px 14px;min-height:48px;border:1.5px solid var(--line);border-radius:10px;background:var(--paper-2);color:var(--ink)}
+.address-field input#address{margin-bottom:0}
+.postcode-layer{margin-top:10px;border:1.5px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+.postcode-layer[hidden]{display:none}
+.postcode-layer-head{display:flex;justify-content:space-between;align-items:center;padding:6px 6px 6px 14px;background:var(--paper-2);font-family:var(--ui);font-size:14px}
+.postcode-box{width:100%;height:440px}
+.consent-body{font-size:13.5px;line-height:1.7;margin-bottom:10px}

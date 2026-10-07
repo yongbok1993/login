@@ -82,14 +82,65 @@ async function check(page, url, label) {
   return problems.length;
 }
 
+// 카카오 우편번호 스크립트 대체본(이 환경에서는 외부 CDN에 접속할 수 없음). 실제 URL로 응답해 페이지 CSP가 그대로 적용된다.
+const POSTCODE_STUB = `window.daum = { Postcode: function (opts) {
+  this.embed = function (el) {
+    var b = document.createElement('button'); b.type = 'button'; b.id = 'stub-pick'; b.textContent = '선택';
+    b.onclick = function () { opts.oncomplete({ zonecode: '17101', roadAddress: '경기 용인시 처인구 이동읍 이원로 69-8',
+      address: '경기 용인시 처인구 이동읍 이원로 69-8', bname: '이동읍', buildingName: '', apartment: 'N' }); };
+    el.appendChild(b);
+  };
+} };`;
+
+async function checkAddressSearch(browser) {
+  const problems = [];
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const cspErrors = [];
+  page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) cspErrors.push(m.text()); });
+  await page.route('https://t1.daumcdn.net/**', (r) => r.fulfill({ contentType: 'text/javascript', body: POSTCODE_STUB }));
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.goto(`${BASE}/register`);
+  await page.waitForSelector('#address-search:not([hidden])', { timeout: 5000 }).catch(() => problems.push('주소 검색 버튼이 나타나지 않음'));
+  if (!problems.length) {
+    await page.click('#address-search');
+    if (await page.isHidden('#postcode-layer')) problems.push('검색 창이 열리지 않음');
+    await page.click('#stub-pick');
+    const v = await page.evaluate(() => ({ zip: postcode.value, addr: address.value, hidden: document.getElementById('postcode-layer').hidden,
+      focus: document.activeElement && document.activeElement.id }));
+    if (v.zip !== '17101') problems.push(`우편번호 ${v.zip}`);
+    if (v.addr !== '경기 용인시 처인구 이동읍 이원로 69-8') problems.push(`주소 ${v.addr}`);
+    if (!v.hidden) problems.push('선택 후 검색 창이 닫히지 않음');
+    if (v.focus !== 'address_detail') problems.push(`선택 후 포커스 ${v.focus}`);
+  }
+  if (cspErrors.length) problems.push(`CSP 위반: ${cspErrors[0]}`);
+  // 스크립트를 못 불러오면 버튼은 숨기고 직접 입력
+  const page2 = await ctx.newPage();
+  await page2.route('https://t1.daumcdn.net/**', (r) => r.abort());
+  await page2.goto(`${BASE}/register`);
+  await page2.waitForTimeout(300);
+  if (!(await page2.isHidden('#address-search'))) problems.push('스크립트 실패 시 버튼이 보임');
+  await page2.fill('#address', '직접 입력 주소');
+  if ((await page2.inputValue('#address')) !== '직접 입력 주소') problems.push('직접 입력 불가');
+  await ctx.close();
+  console.log(`${problems.length ? '✗' : '✓'} 주소 검색(카카오 대체본)`);
+  for (const p of problems) console.log(`    ${p}`);
+  return problems.length;
+}
+
 let failures = 0;
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined) });
 try {
   await waitForServer();
+  failures += await checkAddressSearch(browser);
+  // 외부 CDN 요청은 즉시 실패시켜 화면 검사 시간을 줄인다.
+  const blockCdn = (pg) => pg.route('https://t1.daumcdn.net/**', (r) => r.abort());
   const anon = await browser.newPage();
+  await blockCdn(anon);
   for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/register', 'register']]) failures += await check(anon, u, l);
   failures += await check(anon, '/account/pin', 'login-redirect');
   const p = await browser.newPage();
+  await blockCdn(p);
   await login(p, '01000000001');
   for (const [u, l] of [['/me', 'me'], ['/me/programs', 'me-programs'], ['/me/open/counseling', 'me-counseling'],
     [`/me/grow/${growId}`, 'grow-confirm'], ['/me/profile', 'me-profile'], ['/me/phone', 'me-phone'], ['/account/pin', 'pin-change']]) {

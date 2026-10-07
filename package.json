@@ -14,7 +14,8 @@
     "test:layout": "node scripts/layout-check.js",
     "seed:dev": "node scripts/seed-dev.js",
     "admin:create": "node scripts/create-admin.js",
-    "db:migrate:remote": "node scripts/migrate-remote.js"
+    "db:migrate:remote": "node scripts/migrate-remote.js",
+    "build:migrations": "node scripts/build-migrations.js"
   },
   "devDependencies": {
     "better-sqlite3": "^13.0.3",

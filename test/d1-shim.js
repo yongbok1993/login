@@ -1,28 +1,10 @@
 // 테스트용 D1 호환 객체: better-sqlite3 위에 D1 API(prepare/bind/first/all/run/batch)를 흉내 낸다.
-// 운영 스키마와 같은 migrations/*.sql을 적용한다.
-import fs from 'node:fs';
-import path from 'node:path';
+// 스키마는 앱과 같은 경로(src/db/migrate.js)로 적용한다.
 import Database from 'better-sqlite3';
-
-const MIGRATIONS_DIR = new URL('../migrations/', import.meta.url);
-
-export function applyMigrations(sqlite) {
-  const files = fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
-  for (const f of files) sqlite.exec(fs.readFileSync(path.join(MIGRATIONS_DIR.pathname, f), 'utf8'));
-}
-
-/** 마이그레이션 SQL을 문장 단위로 나눈다(전체 줄 주석 제거 후 ';' 기준). */
-export function migrationStatements() {
-  const files = fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
-  return files.flatMap((f) => fs.readFileSync(path.join(MIGRATIONS_DIR.pathname, f), 'utf8')
-    .split('\n').filter((l) => !l.trim().startsWith('--')).join('\n')
-    .split(/;\s*(?:\n|$)/).map((x) => x.trim()).filter(Boolean));
-}
 
 export function createD1(file = ':memory:') {
   const sqlite = new Database(file);
   sqlite.pragma('foreign_keys = ON');
-  applyMigrations(sqlite);
 
   function exec(sql, rawParams) {
     const s = sqlite.prepare(sql);

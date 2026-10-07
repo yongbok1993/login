@@ -99,7 +99,9 @@ export function meRoutes(r) {
   r.post('/me/profile', requireParticipant, async (c) => {
     const { value, errors } = parsePersonForm(c.body);
     if (Object.keys(errors).length) return profile(c, { values: value, errors }, 422);
-    await updateProfile(c.db, c.user.id, { name: value.name, address: value.address, birthDate: value.birth_date });
+    await updateProfile(c.db, c.user.id, {
+      name: value.name, address: value.address, addressDetail: value.address_detail, postcode: value.postcode, birthDate: value.birth_date,
+    });
     await c.session.flash('ok', '저장되었습니다.');
     return redirect(c, '/me/profile');
   });

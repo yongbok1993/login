@@ -47,7 +47,7 @@ export function brand(href = '/') {
   return html`<a class="brand" href="${href}">로그<em>人</em><small>LOGIN : 人</small></a>`;
 }
 
-export function layout(ctx, { title, body, area = 'public' }) {
+export function layout(ctx, { title, body, area = 'public', scripts = [] }) {
   const showCta = area === 'public' && !ctx.user;
   return html`<!DOCTYPE html>
 <html lang="ko">
@@ -59,6 +59,7 @@ export function layout(ctx, { title, body, area = 'public' }) {
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <link rel="stylesheet" href="/static/styles.css">
+${scripts.map((src) => html`<script src="${src}" defer></script>`)}
 </head>
 <body class="area-${area}">
 <a class="skip" href="#main">본문 바로가기</a>
