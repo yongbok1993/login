@@ -69,7 +69,7 @@ export function participantsPage(ctx, { rows, status }) {
       <td><a href="/admin/participants/${u.id}">${u.name}</a></td>
       <td>${formatPhone(u.phone)}</td>
       <td>${formatDate(u.birth_date)}</td>
-      <td>${u.address}</td>
+      <td>${u.postcode ? `(${u.postcode}) ` : ''}${u.address} ${u.address_detail || ''}</td>
       <td>${formatDateTime(u.registered_at)}</td>
       <td>${INTERNAL_STATUS[u.internal_status]}</td>
       <td>${u.como_status ? LINK_STATUS[u.como_status] : '미확인'}</td>
@@ -86,7 +86,7 @@ export function participantPage(ctx, { user, registration, consents, enrollments
         <dt>연락처</dt><dd>${formatPhone(user.phone)}
           ${user.phone_confirmed_at ? html`<span class="chip">확인 ${formatDateTime(user.phone_confirmed_at)}</span>` : html`<span class="chip warn">미확인</span>`}</dd>
         <dt>생년월일</dt><dd>${formatDate(user.birth_date)}</dd>
-        <dt>주소</dt><dd>${user.address}</dd>
+        <dt>주소</dt><dd>${user.postcode ? `(${user.postcode}) ` : ''}${user.address} ${user.address_detail || ''}</dd>
         <dt>등록일</dt><dd>${formatDateTime(registration.registered_at)}</dd>
         <dt>상태</dt><dd>${INTERNAL_STATUS[registration.internal_status]}</dd>
       </dl>

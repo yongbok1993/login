@@ -2,12 +2,14 @@ import { html } from '../lib/html.js';
 import { formatPhone } from '../lib/phone.js';
 import { formatDate, formatDateTime, formatTimeRange } from '../lib/time.js';
 import { THEMES } from '../site.js';
+import { addressFields, POSTCODE_SCRIPTS } from './address.js';
 import { csrfField, errorSummary, field, layout, textInput, themeDot } from './layout.js';
 
-function page(ctx, title, inner) {
+function page(ctx, title, inner, scripts = []) {
   return layout(ctx, {
     title,
     area: 'me',
+    scripts,
     body: html`<section class="sec"><div class="wrap">${inner}</div></section>`,
   });
 }
@@ -216,9 +218,7 @@ export function profilePage(ctx, { user, consents, consentDoc, values, errors = 
       ${field({ id: 'name', label: '이름', error: errors.name,
         input: (d) => textInput({ id: 'name', value: v.name, autocomplete: 'name', maxlength: 40, required: true,
           error: errors.name, describedBy: d }) })}
-      ${field({ id: 'address', label: '주소', error: errors.address,
-        input: (d) => textInput({ id: 'address', value: v.address, autocomplete: 'street-address', maxlength: 200,
-          required: true, error: errors.address, describedBy: d }) })}
+      ${addressFields(v, errors)}
       ${field({ id: 'birth_date', label: '생년월일', error: errors.birth_date, hint: '예: 19700101',
         input: (d) => textInput({ id: 'birth_date', value: v.birth_date_input ?? (v.birth_date || '').replace(/-/g, ''),
           autocomplete: 'bday', inputmode: 'numeric', maxlength: 10, required: true, error: errors.birth_date, describedBy: d }) })}
@@ -236,5 +236,5 @@ export function profilePage(ctx, { user, consents, consentDoc, values, errors = 
       ${consents.length ? html`<ul class="plain">${consents.map((c) => html`
         <li>${titles[c.purpose] || c.purpose} · ${c.agreed ? '동의' : '미동의'} · ${formatDateTime(c.agreed_at)}
           ${c.withdrawn_at ? html` · 철회 ${formatDateTime(c.withdrawn_at)}` : ''}</li>`)}</ul>` : html`<p>없음</p>`}
-    </div>`);
+    </div>`, POSTCODE_SCRIPTS);
 }

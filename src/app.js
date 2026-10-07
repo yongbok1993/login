@@ -16,10 +16,12 @@ const MAX_BODY = 20 * 1024;
 const SECURITY_HEADERS = {
   'Content-Security-Policy': [
     "default-src 'self'",
-    "script-src 'none'",
-    "style-src 'self' https://fonts.googleapis.com",
+    // 카카오(다음) 우편번호 서비스: 스크립트·검색 창(iframe)
+    "script-src 'self' https://t1.daumcdn.net https://t1.kakaocdn.net",
+    'frame-src https://postcode.map.daum.net https://postcode.map.kakao.com',
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     'font-src https://fonts.gstatic.com',
-    "img-src 'self' data:",
+    "img-src 'self' data: https://t1.daumcdn.net https://t1.kakaocdn.net",
     "form-action 'self'",
     "frame-ancestors 'none'",
     "base-uri 'none'",

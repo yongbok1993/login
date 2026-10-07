@@ -51,5 +51,12 @@ export const MIGRATIONS = [
       "CREATE INDEX login_attempts_phone ON login_attempts(phone, created_at)",
       "CREATE INDEX login_attempts_ip ON login_attempts(ip, created_at)"
     ]
+  },
+  {
+    "name": "0005_address_detail.sql",
+    "statements": [
+      "ALTER TABLE users ADD COLUMN postcode TEXT",
+      "ALTER TABLE users ADD COLUMN address_detail TEXT NOT NULL DEFAULT ''"
+    ]
   }
 ];

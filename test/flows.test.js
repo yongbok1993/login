@@ -24,7 +24,8 @@ test('공개 홈: L/O/G 목록, 꼬모·상담 버튼·참여 절차·시안 설
     '<img', 'cloudflareinsights', ...BANNED]) {
     assert.ok(!r.text.includes(bad), `공개 홈에 "${bad}" 노출`);
   }
-  assert.match(r.headers.get('content-security-policy'), /script-src 'none'/);
+  assert.ok(!/<script/.test(r.text), '공개 홈은 스크립트를 불러오지 않음');
+  assert.match(r.headers.get('content-security-policy'), /script-src 'self' https:\/\/t1\.daumcdn\.net https:\/\/t1\.kakaocdn\.net;/);
 });
 
 const REG = { name: '홍길동', phone: '010-1111-2222', address: '경기도 용인시 처인구 테스트로 1', birth_date: '1970.3.5',
@@ -376,7 +377,7 @@ test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async 
   });
   assert.equal(r.status, 303);
   assert.equal(r.headers.get('location'), '/me');
-  assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '미확정');
+  assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '2026-10-07');
 });
 
 test('운영 모드 설정 오류: SESSION_SECRET·DB 바인딩 누락을 알려 준다', async () => {
@@ -391,19 +392,48 @@ test('운영 모드 설정 오류: SESSION_SECRET·DB 바인딩 누락을 알려
   assert.match(await r.text(), /D1 데이터베이스 바인딩\(DB\)/);
 });
 
-test('동의문 미설정이면 필수 동의 1개를 받고 문안 버전을 미확정으로 기록', async (t) => {
+test('기본 개인정보 수집·이용 동의문 표시, 동의 버전 기록, CONSENT_JSON이 있으면 그 문안 사용', async (t) => {
   const { loadConsent } = await import('../src/config.js');
   const app = await startApp({ cfg: { consent: undefined } });
   t.after(app.close);
-  assert.equal(loadConsent(app.cfg).version, '미확정');
+  assert.equal(loadConsent(app.cfg).version, '2026-10-07');
   const c = app.client();
   let r = await c.get('/register');
-  assert.match(r.text, /수집 항목: 이름, 주소, 생년월일, 휴대전화 번호/);
+  for (const part of ['수집·이용 목적', '수집 항목', '필수: 이름, 휴대전화 번호, 주소, 생년월일', '보유·이용 기간',
+    '동의를 거부할 권리', '참여 등록과 프로그램 참여가 제한됩니다']) assert.ok(r.text.includes(part), part);
   r = await c.post('/register', { ...REG, consent: [] });
   assert.equal(r.status, 422);
   r = await c.post('/register', REG);
   assert.equal(r.location, '/me');
-  assert.equal((await app.sql.get('SELECT doc_version FROM consents')).doc_version, '미확정');
+  assert.equal((await app.sql.get('SELECT doc_version, agreed FROM consents')).doc_version, '2026-10-07');
+
+  const custom = await startApp({ cfg: { consent: undefined, consentJson: JSON.stringify({ version: 'v9', items: [{ key: 'privacy', title: '기관 문안', required: true, body: '본문' }] }) } });
+  t.after(custom.close);
+  assert.equal(loadConsent(custom.cfg).version, 'v9');
+});
+
+test('주소: 우편번호·도로명·상세 주소 저장, 등록·내 정보 화면에만 주소 검색 스크립트', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const c = app.client();
+  let r = await c.get('/register');
+  assert.match(r.text, /postcode\.v2\.js/);
+  assert.match(r.text, /\/static\/address\.js/);
+  assert.match(r.text, /id="address-search"[^>]*hidden/, '스크립트 없을 때는 검색 버튼 숨김(직접 입력)');
+  assert.match(r.headers.get('content-security-policy'), /script-src 'self' https:\/\/t1\.daumcdn\.net/);
+  assert.match(r.headers.get('content-security-policy'), /frame-src https:\/\/postcode\.map\.daum\.net/);
+  assert.ok(!(await app.client().get('/')).text.includes('postcode.v2.js'), '공개 홈에는 불러오지 않음');
+  r = await c.post('/register', { ...REG, postcode: '17101', address: '경기도 용인시 처인구 이동읍 이원로 69-8', address_detail: '2층' });
+  assert.equal(r.location, '/me');
+  const u = await app.sql.get('SELECT postcode, address, address_detail FROM users');
+  assert.deepEqual({ ...u }, { postcode: '17101', address: '경기도 용인시 처인구 이동읍 이원로 69-8', address_detail: '2층' });
+  r = await c.get('/me/profile');
+  assert.match(r.text, /value="17101"/);
+  assert.match(r.text, /value="2층"/);
+  assert.match(r.text, /postcode\.v2\.js/);
+  r = await c.post('/me/profile', { name: '홍길동', postcode: 'abc', address: '새 주소', address_detail: '', birth_date: '19700305' });
+  assert.equal(r.status, 303);
+  assert.equal((await app.sql.get('SELECT postcode FROM users')).postcode, null, '형식이 틀린 우편번호는 저장하지 않음');
 });
 
 test('내 정보: 이름·주소·생년월일 수정', async (t) => {

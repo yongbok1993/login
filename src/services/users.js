@@ -14,11 +14,15 @@ export function findUserByPhone(db, phone) {
 /** 이름·주소·생년월일 입력 검증(최초 등록·내 정보 공통) */
 export function parsePersonForm(body) {
   const str = (k) => String(Array.isArray(body[k]) ? body[k][0] ?? '' : body[k] ?? '').trim();
-  const value = { name: str('name'), address: str('address'), birth_date_input: str('birth_date') };
+  const value = { name: str('name'), address: str('address'), address_detail: str('address_detail'), postcode: str('postcode'),
+    birth_date_input: str('birth_date') };
   value.birth_date = parseBirthDate(value.birth_date_input);
   const errors = {};
   if (!value.name || value.name.length > 40) errors.name = '이름을 입력해 주세요.';
   if (!value.address || value.address.length > 200) errors.address = '주소를 입력해 주세요.';
+  if (value.address_detail.length > 100) errors.address_detail = '상세 주소가 너무 깁니다.';
+  if (value.postcode && !/^\d{5}$/.test(value.postcode)) value.postcode = '';
+  value.postcode = value.postcode || null;
   if (!value.birth_date) errors.birth_date = value.birth_date_input ? '생년월일을 확인해 주세요.' : '생년월일을 입력해 주세요.';
   return { value, errors };
 }
@@ -27,12 +31,13 @@ export function parsePersonForm(body) {
  * 최초 등록: 사용자·접수·동의 이력을 한 번에(원자적으로) 만든다.
  * 같은 번호로 이미 계정이 있으면 새로 만들지 않고 null을 돌려준다.
  */
-export async function registerUser(db, { name, phone, address, birthDate, pinHash, consent, agreedKeys }) {
+export async function registerUser(db, { name, phone, address, addressDetail = '', postcode = null, birthDate, pinHash, consent, agreedKeys }) {
   const now = nowIso();
   try {
     await batch(db, [
-      stmt(db, `INSERT INTO users (name, phone, phone_verified_at, address, birth_date, pin_hash, pin_updated_at, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, name, phone, now, address, birthDate, pinHash, now, now, now),
+      stmt(db, `INSERT INTO users (name, phone, phone_verified_at, address, address_detail, postcode, birth_date, pin_hash,
+        pin_updated_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      name, phone, now, address, addressDetail, postcode, birthDate, pinHash, now, now, now),
       stmt(db, `INSERT INTO registrations (user_id, registered_at, updated_at) SELECT id, ?, ? FROM users WHERE phone = ?`, now, now, phone),
       ...consent.items.map((item) => stmt(db, `INSERT INTO consents (user_id, purpose, agreed, doc_version, agreed_at)
         SELECT id, ?, ?, ?, ? FROM users WHERE phone = ?`, item.key, agreedKeys.includes(item.key) ? 1 : 0, consent.version, now, phone)),
@@ -44,9 +49,9 @@ export async function registerUser(db, { name, phone, address, birthDate, pinHas
   return (await findUserByPhone(db, phone)).id;
 }
 
-export async function updateProfile(db, userId, { name, address, birthDate }) {
-  await run(db, 'UPDATE users SET name = ?, address = ?, birth_date = ?, updated_at = ? WHERE id = ?',
-    name, address, birthDate, nowIso(), userId);
+export async function updateProfile(db, userId, { name, address, addressDetail = '', postcode = null, birthDate }) {
+  await run(db, 'UPDATE users SET name = ?, address = ?, address_detail = ?, postcode = ?, birth_date = ?, updated_at = ? WHERE id = ?',
+    name, address, addressDetail, postcode, birthDate, nowIso(), userId);
 }
 
 /**

@@ -1,11 +1,13 @@
 import { html } from '../lib/html.js';
 import { SITE } from '../site.js';
+import { addressFields, POSTCODE_SCRIPTS } from './address.js';
 import { csrfField, errorSummary, field, layout, textInput } from './layout.js';
 
-function page(ctx, title, inner, area = 'public') {
+function page(ctx, title, inner, area = 'public', scripts = []) {
   return layout(ctx, {
     title,
     area,
+    scripts,
     body: html`<section class="sec narrow"><div class="wrap">
       <h1 class="page-title">${title}</h1>
       ${inner}
@@ -50,9 +52,7 @@ export function registerForm(ctx, { consent, values = {}, errors = {} }) {
         input: (d) => textInput({ id: 'name', value: values.name, autocomplete: 'name', maxlength: 40, required: true,
           error: errors.name, describedBy: d }) })}
       ${phoneField(values.phone, errors.phone, '연락처 (휴대전화 번호)')}
-      ${field({ id: 'address', label: '주소', error: errors.address,
-        input: (d) => textInput({ id: 'address', value: values.address, autocomplete: 'street-address', maxlength: 200,
-          required: true, error: errors.address, describedBy: d }) })}
+      ${addressFields(values, errors)}
       ${field({ id: 'birth_date', label: '생년월일', error: errors.birth_date, hint: '예: 19700101',
         input: (d) => textInput({ id: 'birth_date', value: values.birth_date_input, autocomplete: 'bday', inputmode: 'numeric',
           maxlength: 10, required: true, error: errors.birth_date, describedBy: d }) })}
@@ -60,10 +60,9 @@ export function registerForm(ctx, { consent, values = {}, errors = {} }) {
       ${pinField({ id: 'pin_confirm', label: 'PIN 확인', error: errors.pin_confirm })}
       <fieldset class="consents${errors.consent ? ' has-error' : ''}" id="consent">
         <legend>동의</legend>
-        ${consent.isDraft && ctx.devNotice ? html`<p class="dev-note" role="note">기관 확정 동의문(CONSENT_JSON) 미설정</p>` : ''}
         ${consent.items.map((item) => html`
           <div class="consent-item">
-            ${item.body ? html`<details><summary>${item.title} 내용 보기</summary><div class="consent-body">${item.body}</div></details>` : ''}
+            ${item.body ? html`<div class="consent-body" tabindex="0" role="region" aria-label="${item.title} 내용">${item.body}</div>` : ''}
             <label class="check">
               <input type="checkbox" name="consent" value="${item.key}"
                 ${(values.consent || []).includes(item.key) ? html`checked` : ''}>
@@ -74,7 +73,7 @@ export function registerForm(ctx, { consent, values = {}, errors = {} }) {
       </fieldset>
       <button type="submit" class="btn">등록하기</button>
     </form>
-    <p class="aside-link">이미 등록하셨나요? <a href="/login">로그인</a></p>`);
+    <p class="aside-link">이미 등록하셨나요? <a href="/login">로그인</a></p>`, 'public', POSTCODE_SCRIPTS);
 }
 
 export function pinChangeForm(ctx, { forced, errors = {}, area }) {

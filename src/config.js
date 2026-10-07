@@ -1,3 +1,5 @@
+import { DEFAULT_CONSENT } from './content/consent.js';
+
 /**
  * Cloudflare Pages 환경 변수(env) 기반 설정.
  * APP_ENV를 지정하지 않으면 운영(production)으로 동작한다. 개발용 기능은 APP_ENV=development에서만 켜진다.
@@ -38,23 +40,15 @@ export function validateConfig(cfg) {
 }
 
 /**
- * 동의문: 기관 확정 문안을 CONSENT_JSON으로 제공한다(형식: content/consent.example.json).
- * 없으면 필수 동의 항목 하나만 표시하고 문안 버전을 '미확정'으로 기록한다.
- * 수집 목적·보관 기간·개인정보보호책임자 등은 임의로 만들지 않는다. 확정 문안이 들어오면 동의를 다시 받는다.
+ * 동의문: CONSENT_JSON 환경 변수(형식: content/consent.example.json)가 있으면 그 문안, 없으면 기본 문안(src/content/consent.js).
  */
-export const UNCONFIRMED_CONSENT_VERSION = '미확정';
-
 export function loadConsent(cfg) {
   if (cfg.consent) return cfg.consent;
   try {
     const doc = JSON.parse(cfg.consentJson);
     if (!doc.version || !Array.isArray(doc.items) || doc.items.length === 0) throw new Error('invalid');
-    return { ...doc, isDraft: false };
+    return doc;
   } catch {
-    return {
-      version: UNCONFIRMED_CONSENT_VERSION,
-      isDraft: true,
-      items: [{ key: 'privacy', title: '개인정보 수집·이용 동의', required: true, body: '수집 항목: 이름, 주소, 생년월일, 휴대전화 번호' }],
-    };
+    return DEFAULT_CONSENT;
   }
 }
