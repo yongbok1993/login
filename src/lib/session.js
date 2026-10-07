@@ -120,5 +120,5 @@ export class Session {
 export async function purgeExpired(db) {
   const now = nowIso();
   await run(db, 'DELETE FROM auth_sessions WHERE expires_at <= ?', now);
-  await run(db, 'DELETE FROM otp_codes WHERE created_at < ?', new Date(Date.now() - DAY).toISOString());
+  await run(db, 'DELETE FROM login_attempts WHERE created_at < ?', new Date(Date.now() - DAY).toISOString());
 }

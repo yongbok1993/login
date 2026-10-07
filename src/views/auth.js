@@ -1,5 +1,5 @@
 import { html } from '../lib/html.js';
-import { maskPhone } from '../lib/phone.js';
+import { SITE } from '../site.js';
 import { csrfField, errorSummary, field, layout, textInput } from './layout.js';
 
 function page(ctx, title, inner, area = 'public') {
@@ -13,58 +13,54 @@ function page(ctx, title, inner, area = 'public') {
   });
 }
 
-/** 전화번호 입력 → 인증번호 발송 (로그인·등록·번호 변경 공통) */
-export function phoneForm(ctx, { title, action, phone = '', error, area }) {
-  return page(ctx, title, html`
-    <form method="post" action="${action}" class="form card" novalidate>
-      ${csrfField(ctx)}
-      ${field({ id: 'phone', label: '휴대전화 번호', error, hint: '숫자만 입력해도 됩니다.',
-        input: (d) => textInput({ id: 'phone', value: phone, type: 'tel', autocomplete: 'tel', inputmode: 'tel',
-          maxlength: 20, required: true, error, describedBy: d }) })}
-      <button type="submit" class="btn">인증번호 받기</button>
-    </form>
-    ${action === '/login' ? html`<p class="aside-link">처음이신가요? <a href="/register">참여 등록</a></p>` : ''}
-    ${action === '/register' ? html`<p class="aside-link">이미 등록하셨나요? <a href="/login">로그인</a></p>` : ''}`, area);
+function phoneField(value, error, label = '휴대전화 번호') {
+  return field({ id: 'phone', label, error, hint: '숫자만 입력해도 됩니다.',
+    input: (d) => textInput({ id: 'phone', value, type: 'tel', autocomplete: 'tel', inputmode: 'tel', maxlength: 20,
+      required: true, error, describedBy: d }) });
 }
 
-/** 인증번호 확인 */
-export function codeForm(ctx, { title, action, resendAction, phone, error, devCode, area }) {
-  return page(ctx, title, html`
-    <form method="post" action="${action}" class="form card" novalidate>
-      ${csrfField(ctx)}
-      <p class="muted">${maskPhone(phone)}</p>
-      ${devCode ? html`<p class="dev-note" role="note">개발용 인증번호 (실제 문자 발송 안 됨): <b>${devCode}</b></p>` : ''}
-      ${field({ id: 'code', label: '인증번호 6자리', error,
-        input: (d) => textInput({ id: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 6,
-          required: true, error, describedBy: d }) })}
-      <button type="submit" class="btn">확인</button>
-    </form>
-    <form method="post" action="${resendAction}" class="aside-link">
-      ${csrfField(ctx)}
-      <input type="hidden" name="phone" value="${phone}">
-      <button type="submit" class="linklike">인증번호 다시 받기</button>
-    </form>`, area);
+function pinField({ id, label, error, hint, autocomplete = 'new-password' }) {
+  return field({ id, label, error, hint,
+    input: (d) => textInput({ id, type: 'password', inputmode: 'numeric', autocomplete, maxlength: 6, required: true,
+      error, describedBy: d }) });
 }
 
-/** 최초 등록 정보 입력 (전화번호 인증 후) */
-export function registerDetailsForm(ctx, { phone, values = {}, errors = {}, consent }) {
+const NEW_PIN_HINT = '숫자 6자리. 같은 숫자 반복, 연속된 숫자, 생년월일, 전화번호 뒷자리는 사용할 수 없습니다.';
+
+export function loginForm(ctx, { phone = '', error }) {
+  return page(ctx, '로그인', html`
+    <form method="post" action="/login" class="form card" novalidate>
+      ${csrfField(ctx)}
+      ${error ? html`<p class="error-summary" role="alert">${error}</p>` : ''}
+      ${phoneField(phone)}
+      ${pinField({ id: 'pin', label: 'PIN 6자리', autocomplete: 'current-password' })}
+      <button type="submit" class="btn">로그인</button>
+    </form>
+    <p class="aside-link">처음이신가요? <a href="/register">참여 등록</a></p>
+    <p class="aside-link">PIN을 잊은 경우 ${SITE.orgName}(${SITE.tel})에 문의해 주세요.</p>`);
+}
+
+/** 최초 등록: 연락처·이름·주소·생년월일·PIN·동의 */
+export function registerForm(ctx, { consent, values = {}, errors = {} }) {
   return page(ctx, '참여 등록', html`
     ${errorSummary(errors)}
-    <form method="post" action="/register/details" class="form card" novalidate>
+    <form method="post" action="/register" class="form card" novalidate>
       ${csrfField(ctx)}
-      <div class="field">
-        <span class="label">휴대전화 번호</span>
-        <p class="readonly">${maskPhone(phone)} <span class="chip">인증 완료</span></p>
-      </div>
       ${field({ id: 'name', label: '이름', error: errors.name,
         input: (d) => textInput({ id: 'name', value: values.name, autocomplete: 'name', maxlength: 40, required: true,
           error: errors.name, describedBy: d }) })}
-      ${field({ id: 'region', label: '거주 지역', error: errors.region, hint: '예: 시·구·동',
-        input: (d) => textInput({ id: 'region', value: values.region, autocomplete: 'address-level2', maxlength: 60,
-          required: true, error: errors.region, describedBy: d }) })}
+      ${phoneField(values.phone, errors.phone, '연락처 (휴대전화 번호)')}
+      ${field({ id: 'address', label: '주소', error: errors.address,
+        input: (d) => textInput({ id: 'address', value: values.address, autocomplete: 'street-address', maxlength: 200,
+          required: true, error: errors.address, describedBy: d }) })}
+      ${field({ id: 'birth_date', label: '생년월일', error: errors.birth_date, hint: '예: 19700101',
+        input: (d) => textInput({ id: 'birth_date', value: values.birth_date_input, autocomplete: 'bday', inputmode: 'numeric',
+          maxlength: 10, required: true, error: errors.birth_date, describedBy: d }) })}
+      ${pinField({ id: 'pin', label: '로그인 PIN 6자리', error: errors.pin, hint: NEW_PIN_HINT })}
+      ${pinField({ id: 'pin_confirm', label: 'PIN 확인', error: errors.pin_confirm })}
       <fieldset class="consents${errors.consent ? ' has-error' : ''}" id="consent">
         <legend>동의</legend>
-        ${consent.isDraft ? html`<p class="dev-note" role="note">개발용 임시 항목 — 기관 확정 동의문으로 교체 필요</p>` : ''}
+        ${consent.isDraft && ctx.devNotice ? html`<p class="dev-note" role="note">기관 확정 동의문(CONSENT_JSON) 미설정</p>` : ''}
         ${consent.items.map((item) => html`
           <div class="consent-item">
             ${item.body ? html`<details><summary>${item.title} 내용 보기</summary><div class="consent-body">${item.body}</div></details>` : ''}
@@ -77,9 +73,31 @@ export function registerDetailsForm(ctx, { phone, values = {}, errors = {}, cons
         ${errors.consent ? html`<p class="error">${errors.consent}</p>` : ''}
       </fieldset>
       <button type="submit" class="btn">등록하기</button>
-    </form>`);
+    </form>
+    <p class="aside-link">이미 등록하셨나요? <a href="/login">로그인</a></p>`);
 }
 
-export function registrationClosed(ctx) {
-  return page(ctx, '참여 등록', html`<p class="card">등록 준비 중입니다.</p>`);
+export function pinChangeForm(ctx, { forced, errors = {}, area }) {
+  const a = area || (ctx.user && ctx.user.role !== 'participant' ? 'admin' : 'me');
+  return page(ctx, 'PIN 변경', html`
+    ${forced ? html`<p class="flash info" role="status">임시 PIN으로 로그인했습니다. 새 PIN을 정해 주세요.</p>` : ''}
+    ${errorSummary(errors)}
+    <form method="post" action="/account/pin" class="form card" novalidate>
+      ${csrfField(ctx)}
+      ${pinField({ id: 'current_pin', label: forced ? '임시 PIN' : '현재 PIN', error: errors.current_pin, autocomplete: 'current-password' })}
+      ${pinField({ id: 'pin', label: '새 PIN 6자리', error: errors.pin, hint: NEW_PIN_HINT })}
+      ${pinField({ id: 'pin_confirm', label: '새 PIN 확인', error: errors.pin_confirm })}
+      <button type="submit" class="btn">변경</button>
+    </form>`, a);
+}
+
+export function phoneChangeForm(ctx, { phone = '', errors = {} }) {
+  return page(ctx, '번호 변경', html`
+    ${errorSummary(errors)}
+    <form method="post" action="/me/phone" class="form card" novalidate>
+      ${csrfField(ctx)}
+      ${phoneField(phone, errors.phone, '새 휴대전화 번호')}
+      ${pinField({ id: 'pin', label: 'PIN 6자리', error: errors.pin, autocomplete: 'current-password' })}
+      <button type="submit" class="btn">변경</button>
+    </form>`, 'me');
 }

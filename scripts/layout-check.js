@@ -8,7 +8,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { get } from '../src/lib/db.js';
 import { applyLocalMigrations, openLocalDb, pagesDevArgs, ROOT } from './local-d1.js';
-import { MOCK_COMO, seed } from './seed-dev.js';
+import { DEV_PIN, MOCK_COMO, seed } from './seed-dev.js';
 
 const WIDTHS = [320, 360, 390, 430, 768, 1024, 1280];
 const PORT = 3300 + Math.floor(Math.random() * 500);
@@ -39,10 +39,9 @@ async function waitForServer() {
 async function login(page, phone) {
   await page.goto(`${BASE}/login`);
   await page.fill('#phone', phone);
+  await page.fill('#pin', DEV_PIN);
   await page.click('button[type=submit].btn');
-  const code = await page.textContent('.dev-note b');
-  await page.fill('#code', code.trim());
-  await page.click('button[type=submit].btn');
+  await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
 
 async function check(page, url, label) {
@@ -89,20 +88,11 @@ try {
   await waitForServer();
   const anon = await browser.newPage();
   for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/register', 'register']]) failures += await check(anon, u, l);
-  // 미등록 번호로 등록 정보 입력 화면까지
-  await anon.goto(`${BASE}/register`);
-  await anon.fill('#phone', '01000000099');
-  await anon.click('button[type=submit].btn');
-  failures += await check(anon, '/verify', 'verify');
-  const code = await anon.textContent('.dev-note b');
-  await anon.fill('#code', code.trim());
-  await anon.click('button[type=submit].btn');
-  failures += await check(anon, '/register/details', 'register-details');
-
+  failures += await check(anon, '/account/pin', 'login-redirect');
   const p = await browser.newPage();
   await login(p, '01000000001');
   for (const [u, l] of [['/me', 'me'], ['/me/programs', 'me-programs'], ['/me/open/counseling', 'me-counseling'],
-    [`/me/grow/${growId}`, 'grow-confirm'], ['/me/profile', 'me-profile'], ['/me/phone', 'me-phone']]) {
+    [`/me/grow/${growId}`, 'grow-confirm'], ['/me/profile', 'me-profile'], ['/me/phone', 'me-phone'], ['/account/pin', 'pin-change']]) {
     failures += await check(p, u, l);
   }
   const unselected = await browser.newPage();

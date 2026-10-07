@@ -1,5 +1,5 @@
 import { all, batch, get, isUniqueError, run, stmt } from '../lib/db.js';
-import { nowIso } from '../lib/time.js';
+import { nowIso, parseBirthDate } from '../lib/time.js';
 import { auditStmt } from './audit.js';
 import { autoAssignStmts, cancelUpcomingStmt } from './enrollments.js';
 
@@ -11,16 +11,28 @@ export function findUserByPhone(db, phone) {
   return get(db, 'SELECT * FROM users WHERE phone = ?', phone);
 }
 
+/** 이름·주소·생년월일 입력 검증(최초 등록·내 정보 공통) */
+export function parsePersonForm(body) {
+  const str = (k) => String(Array.isArray(body[k]) ? body[k][0] ?? '' : body[k] ?? '').trim();
+  const value = { name: str('name'), address: str('address'), birth_date_input: str('birth_date') };
+  value.birth_date = parseBirthDate(value.birth_date_input);
+  const errors = {};
+  if (!value.name || value.name.length > 40) errors.name = '이름을 입력해 주세요.';
+  if (!value.address || value.address.length > 200) errors.address = '주소를 입력해 주세요.';
+  if (!value.birth_date) errors.birth_date = value.birth_date_input ? '생년월일을 확인해 주세요.' : '생년월일을 입력해 주세요.';
+  return { value, errors };
+}
+
 /**
  * 최초 등록: 사용자·접수·동의 이력을 한 번에(원자적으로) 만든다.
  * 같은 번호로 이미 계정이 있으면 새로 만들지 않고 null을 돌려준다.
  */
-export async function registerUser(db, { name, phone, region, consent, agreedKeys }) {
+export async function registerUser(db, { name, phone, address, birthDate, pinHash, consent, agreedKeys }) {
   const now = nowIso();
   try {
     await batch(db, [
-      stmt(db, `INSERT INTO users (name, phone, phone_verified_at, region, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-        name, phone, now, region, now, now),
+      stmt(db, `INSERT INTO users (name, phone, phone_verified_at, address, birth_date, pin_hash, pin_updated_at, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, name, phone, now, address, birthDate, pinHash, now, now, now),
       stmt(db, `INSERT INTO registrations (user_id, registered_at, updated_at) SELECT id, ?, ? FROM users WHERE phone = ?`, now, now, phone),
       ...consent.items.map((item) => stmt(db, `INSERT INTO consents (user_id, purpose, agreed, doc_version, agreed_at)
         SELECT id, ?, ?, ?, ? FROM users WHERE phone = ?`, item.key, agreedKeys.includes(item.key) ? 1 : 0, consent.version, now, phone)),
@@ -32,20 +44,22 @@ export async function registerUser(db, { name, phone, region, consent, agreedKey
   return (await findUserByPhone(db, phone)).id;
 }
 
-export async function updateProfile(db, userId, { name, region }) {
-  await run(db, 'UPDATE users SET name = ?, region = ?, updated_at = ? WHERE id = ?', name, region, nowIso(), userId);
+export async function updateProfile(db, userId, { name, address, birthDate }) {
+  await run(db, 'UPDATE users SET name = ?, address = ?, birth_date = ?, updated_at = ? WHERE id = ?',
+    name, address, birthDate, nowIso(), userId);
 }
 
 /**
- * 전화번호 변경(새 번호 인증 후 호출).
- * 꼬모 연결은 해제하고 재확인 대상으로 돌리며, 가져온 상담 현황도 지운다.
- * 현재 세션을 제외한 다른 로그인 세션은 모두 종료한다.
+ * 전화번호 변경(현재 PIN 확인 후 호출).
+ * 새 번호는 관리자가 다시 확인할 때까지 미확인 상태다. 꼬모 연결은 해제하고 재확인 대상으로 돌리며,
+ * 가져온 상담 현황도 지운다. 현재 세션을 제외한 다른 로그인 세션은 모두 종료한다.
  */
 export async function changePhone(db, userId, newPhone, keepTokenHash) {
   const now = nowIso();
   try {
     await batch(db, [
-      stmt(db, 'UPDATE users SET phone = ?, phone_verified_at = ?, updated_at = ? WHERE id = ?', newPhone, now, now, userId),
+      stmt(db, 'UPDATE users SET phone = ?, phone_verified_at = ?, phone_confirmed_at = NULL, updated_at = ? WHERE id = ?',
+        newPhone, now, now, userId),
       stmt(db, `UPDATE como_links SET status = 'needs_recheck', external_id = NULL, phone_at_link = NULL, candidates = NULL,
         detail = 'phone_changed', checked_at = ?, linked_at = NULL WHERE user_id = ?`, now, userId),
       stmt(db, 'DELETE FROM como_status WHERE user_id = ?', userId),
@@ -57,6 +71,34 @@ export async function changePhone(db, userId, newPhone, keepTokenHash) {
     throw err;
   }
   return true;
+}
+
+/** 본인 PIN 변경. 다른 기기의 로그인은 종료한다. */
+export async function setPin(db, userId, pinHash, keepTokenHash) {
+  const now = nowIso();
+  await batch(db, [
+    stmt(db, 'UPDATE users SET pin_hash = ?, pin_must_change = 0, pin_updated_at = ?, updated_at = ? WHERE id = ?', pinHash, now, now, userId),
+    stmt(db, 'DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?', userId, keepTokenHash),
+    auditStmt(db, userId, 'user.pin_change', 'user', userId),
+  ]);
+}
+
+/** 관리자 PIN 초기화: 임시 PIN 저장, 첫 로그인 때 변경 요구, 모든 로그인 세션 종료 */
+export async function resetPin(db, actorId, userId, pinHash) {
+  const now = nowIso();
+  await batch(db, [
+    stmt(db, 'UPDATE users SET pin_hash = ?, pin_must_change = 1, pin_updated_at = ?, updated_at = ? WHERE id = ?', pinHash, now, now, userId),
+    stmt(db, 'DELETE FROM auth_sessions WHERE user_id = ?', userId),
+    auditStmt(db, actorId, 'user.pin_reset', 'user', userId),
+  ]);
+}
+
+/** 관리자가 본인·연락처를 확인했음을 기록(꼬모 매핑 전제 조건) */
+export async function confirmPhone(db, actorId, userId) {
+  await batch(db, [
+    stmt(db, 'UPDATE users SET phone_confirmed_at = ?, updated_at = ? WHERE id = ?', nowIso(), nowIso(), userId),
+    auditStmt(db, actorId, 'user.phone_confirm', 'user', userId),
+  ]);
 }
 
 export function listConsents(db, userId) {
@@ -106,7 +148,9 @@ export async function setSelected(db, actorId, userId, selected) {
   const now = nowIso();
   if (selected) {
     const res = await batch(db, [
-      stmt(db, 'UPDATE users SET is_selected = 1, selected_at = ?, updated_at = ? WHERE id = ?', now, now, userId),
+      // 선정은 초기상담 등 대면 확인 후 이뤄지므로 연락처 확인도 함께 기록한다.
+      stmt(db, `UPDATE users SET is_selected = 1, selected_at = ?, phone_confirmed_at = COALESCE(phone_confirmed_at, ?),
+        updated_at = ? WHERE id = ?`, now, now, now, userId),
       stmt(db, "UPDATE registrations SET internal_status = 'selected', updated_at = ? WHERE user_id = ?", now, userId),
       ...autoAssignStmts(db, { userId }),
       auditStmt(db, actorId, 'participant.select', 'user', userId),

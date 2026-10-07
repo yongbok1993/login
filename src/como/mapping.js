@@ -4,7 +4,8 @@ import { audit } from '../services/audit.js';
 
 /**
  * 전화번호 기준 꼬모 계정 매핑.
- * - 로그人 쪽 번호는 인증된 번호만 쓴다(users.phone은 인증 후에만 저장된다).
+ * - 로그人 쪽 번호는 관리자가 확인한 번호만 쓴다(users.phone_confirmed_at). 문자 인증이 없으므로
+ *   확인 전 번호로 조회하면 남의 번호를 입력한 사람이 그 번호의 상담 현황을 볼 수 있기 때문이다.
  * - 꼬모 계정이 0개: not_found, 2개 이상: conflict(자동 연결 중단, 관리자 확인).
  * - 같은 꼬모 계정이 이미 다른 사용자와 연결돼 있거나 이름이 다르면 conflict.
  * - 확인된 연결은 내부 사용자 ID로 저장하고 연결 당시 번호를 함께 보관한다.
@@ -53,6 +54,7 @@ function linkedToOther(db, externalId, userId) {
 /** 한 사용자의 매핑 확인. 결과 상태 문자열 또는 'not_configured' */
 export async function checkLink(db, adapter, user, actorId = null) {
   if (!adapter.configured) return 'not_configured';
+  if (!user.phone_confirmed_at) return 'unconfirmed';
   const current = await getLink(db, user.id);
   // 연결된 상태에서 번호가 그대로면 다시 조회하지 않는다.
   if (current && current.status === 'linked' && current.phone_at_link === user.phone) return 'linked';
@@ -104,6 +106,7 @@ export async function checkLink(db, adapter, user, actorId = null) {
  */
 export async function confirmLink(db, adapter, user, externalId, actorId) {
   if (!adapter.configured) return 'not_configured';
+  if (!user.phone_confirmed_at) return 'unconfirmed';
   let accounts;
   try {
     accounts = await adapter.findAccountsByPhone(user.phone);
@@ -134,6 +137,7 @@ export async function recheck(db, adapter, user, actorId) {
 /** 상담 현황 동기화: 연결 상태이고 연결 당시 번호와 현재 번호가 같을 때만 */
 export async function syncStatus(db, adapter, user) {
   if (!adapter.configured) return 'not_configured';
+  if (!user.phone_confirmed_at) return 'not_linked';
   const link = await getLink(db, user.id);
   if (!link || link.status !== 'linked' || link.phone_at_link !== user.phone) return 'not_linked';
   let s;
@@ -164,7 +168,7 @@ export async function syncStatus(db, adapter, user) {
  * 미연결·연동 실패·번호 불일치에서는 수치를 만들지 않고 { state: 'unavailable' }만 돌려준다.
  */
 export async function counselingView(db, adapter, user) {
-  if (!adapter.configured) return { state: 'unavailable' };
+  if (!adapter.configured || !user.phone_confirmed_at) return { state: 'unavailable' };
   const link = await getLink(db, user.id);
   if (!link || link.status !== 'linked' || link.phone_at_link !== user.phone) return { state: 'unavailable' };
   const st = await get(db, 'SELECT * FROM como_status WHERE user_id = ? AND external_id = ?', user.id, link.external_id);
@@ -186,7 +190,7 @@ export async function counselingView(db, adapter, user) {
  * 충돌·오류 건과 관리자가 해제한 연결은 자동으로 다시 연결하지 않는다(관리자 확인).
  */
 export async function refreshIfStale(db, adapter, user, maxAgeMinutes) {
-  if (!adapter.configured) return;
+  if (!adapter.configured || !user.phone_confirmed_at) return;
   const maxAgeMs = maxAgeMinutes * 60 * 1000;
   const link = await getLink(db, user.id);
   const stale = (iso) => !iso || Date.now() - Date.parse(iso) >= maxAgeMs;

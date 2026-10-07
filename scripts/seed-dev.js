@@ -2,7 +2,9 @@
 // 이름·번호·일정은 모두 테스트 표시가 붙은 가짜 값이며 실제 운영 데이터가 아니다.
 import fs from 'node:fs';
 import path from 'node:path';
+import { loadConfig } from '../src/config.js';
 import { get, run } from '../src/lib/db.js';
+import { hashPin } from '../src/lib/pin.js';
 import { nowIso } from '../src/lib/time.js';
 import { createSession, getProgramByCode } from '../src/services/programs.js';
 import { registerUser, setSelected } from '../src/services/users.js';
@@ -16,15 +18,20 @@ export const MOCK_COMO = {
   ],
 };
 
+// 개발용 PIN(로컬 개발 기본 SESSION_SECRET 기준). 운영에는 쓰지 않는다.
+export const DEV_PIN = '135792';
+
 export async function seed(db) {
+  const secret = loadConfig({ APP_ENV: 'development' }).sessionSecret;
+  const pinHash = await hashPin(secret, DEV_PIN);
   if ((await get(db, 'SELECT COUNT(*) n FROM users')).n > 0) throw new Error('이미 사용자가 있습니다. 로컬 DB(.wrangler/state)를 지우고 다시 실행해 주세요.');
   const consent = { version: 'dev-draft', items: [{ key: 'privacy', title: '개인정보 수집·이용 동의', required: true }] };
   const now = nowIso();
-  await run(db, `INSERT INTO users (name, phone, phone_verified_at, region, role, created_at, updated_at)
-    VALUES ('테스트관리자', '01000000000', ?, '', 'manager', ?, ?)`, now, now, now);
+  await run(db, `INSERT INTO users (name, phone, phone_verified_at, role, pin_hash, created_at, updated_at)
+    VALUES ('테스트관리자', '01000000000', ?, 'manager', ?, ?, ?)`, now, pinHash, now, now);
   const users = [];
   for (const i of [1, 2, 3, 4]) {
-    users.push(await registerUser(db, { name: `테스트참여자${i}`, phone: `0100000000${i}`, region: '테스트 지역', consent, agreedKeys: ['privacy'] }));
+    users.push(await registerUser(db, { name: `테스트참여자${i}`, phone: `0100000000${i}`, address: '테스트 주소', birthDate: '1970-01-01', pinHash, consent, agreedKeys: ['privacy'] }));
   }
   const sessions = [
     ['link-cooking', { round_no: 1, date: '2027-02-10', start_time: '10:00', end_time: '12:00', place: '테스트 장소' }],
@@ -57,5 +64,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     fs.writeFileSync(devVars, `APP_ENV=development\nCOMO_ADAPTER=mock\nCOMO_MOCK_JSON='${JSON.stringify(MOCK_COMO)}'\n`);
     console.log('.dev.vars 생성(개발용 설정·꼬모 모의 데이터)');
   }
-  console.log('개발용 데이터 생성 완료. 관리자 01000000000, 참여자 01000000001~4 (4번은 미선정)');
+  console.log(`개발용 데이터 생성 완료. PIN ${DEV_PIN} — 관리자 01000000000, 참여자 01000000001~4 (4번은 미선정)`);
 }

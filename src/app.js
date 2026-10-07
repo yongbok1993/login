@@ -4,11 +4,10 @@ import { Router } from './lib/router.js';
 import { purgeExpired, Session } from './lib/session.js';
 import { adminRoutes } from './routes/admin.js';
 import { authRoutes } from './routes/auth.js';
-import { deny, render, respond } from './routes/helpers.js';
+import { deny, redirect, render, respond } from './routes/helpers.js';
 import { meRoutes } from './routes/me.js';
 import { groupByTheme, listPrograms } from './services/programs.js';
 import { getUser } from './services/users.js';
-import { createSmsSender } from './sms/index.js';
 import { homePage } from './views/public.js';
 
 const MAX_BODY = 20 * 1024;
@@ -34,7 +33,7 @@ const SECURITY_HEADERS = {
 /** Cloudflare Pages 환경 변수·바인딩으로 의존성을 만든다. D1 바인딩 이름은 DB. */
 export function depsFromEnv(env) {
   const cfg = loadConfig(env);
-  return { cfg, db: env.DB, sms: createSmsSender(cfg), como: createComoAdapter(cfg), logger: console };
+  return { cfg, db: env.DB, como: createComoAdapter(cfg), logger: console };
 }
 
 function buildRouter() {
@@ -116,6 +115,9 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
         let response = null;
         if (c.method === 'POST' && !c.session.checkCsrf(typeof c.body._csrf === 'string' ? c.body._csrf : '')) {
           response = await deny(c, 403, '요청이 만료되었습니다. 페이지를 새로 열어 다시 시도해 주세요.');
+        } else if (c.user && c.user.pin_must_change && !['/account/pin', '/logout'].includes(c.path)) {
+          // 관리자가 초기화한 임시 PIN으로 로그인했으면 새 PIN을 정할 때까지 다른 화면을 막는다.
+          response = redirect(c, '/account/pin', 302);
         } else if (!match) {
           response = await deny(c, 404);
         } else {
@@ -126,7 +128,7 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
           }
           if (!response) response = await deny(c, 404);
         }
-        // 만료 세션·인증번호 정리(가끔, 응답 이후)
+        // 만료 세션·로그인 시도 기록 정리(가끔, 응답 이후)
         if (Math.random() < 0.01 && ctx.waitUntil) ctx.waitUntil(purgeExpired(c.db).catch(() => {}));
         return withHeaders(response, deps.cfg, c.user);
       } catch (err) {
