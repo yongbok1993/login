@@ -171,3 +171,36 @@ export async function setSelected(db, actorId, userId, selected) {
   return { cancelled: res[2].meta.changes };
 }
 
+
+// ── 관리자 권한 ─────────────────────────────────────────
+
+export const ROLES = { participant: '참여자', staff: '운영 담당', manager: '전체 관리자' };
+
+export async function hasManager(db) {
+  return !!(await get(db, "SELECT 1 AS ok FROM users WHERE role = 'manager' LIMIT 1"));
+}
+
+/**
+ * 권한 변경. 관리자로 지정하면 참여자 선정을 해제한다(참여자 기능과 관리자 기능을 한 계정에 섞지 않음).
+ * 마지막 전체 관리자는 해제할 수 없다.
+ */
+export async function setRole(db, actorId, userId, role) {
+  if (!ROLES[role]) return 'invalid';
+  const user = await getUser(db, userId);
+  if (!user) return 'not_found';
+  if (user.role === role) return 'ok';
+  if (user.role === 'manager') {
+    const n = (await get(db, "SELECT COUNT(*) n FROM users WHERE role = 'manager'")).n;
+    if (n <= 1) return 'last_manager';
+  }
+  await batch(db, [
+    stmt(db, `UPDATE users SET role = ?, is_selected = CASE WHEN ? = 'participant' THEN is_selected ELSE 0 END, updated_at = ?
+      WHERE id = ?`, role, role, nowIso(), userId),
+    auditStmt(db, actorId, 'user.role', 'user', userId, { from: user.role, to: role }),
+  ]);
+  return 'ok';
+}
+
+export function listStaff(db) {
+  return all(db, "SELECT * FROM users WHERE role IN ('staff', 'manager') ORDER BY role DESC, name");
+}

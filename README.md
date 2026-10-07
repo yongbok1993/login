@@ -11,7 +11,7 @@ public/                  Pages 정적 출력 디렉터리 (build output director
   _routes.json           /static/* 은 정적 파일, 나머지는 Functions
 functions/
   [[path]].js            Pages Functions 진입점(모든 경로) → src/app.js
-migrations/              D1 스키마(0001)·프로그램 기본 목록(0002)·주소/생년월일(0003)·PIN 로그인(0004)·우편번호/상세 주소(0005)
+migrations/              D1 스키마(0001)·프로그램(0002)·주소/생년월일(0003)·PIN 로그인(0004)·상세 주소(0005)·Grow 선정/공지(0006)
 .github/workflows/ci.yml  PR·main 테스트
 src/
   app.js                 요청 처리(라우팅·세션·CSRF·보안 헤더)
@@ -52,7 +52,7 @@ test/                    자동 테스트
    | `CONSENT_JSON` | Text | 선택. 기본 동의문(`src/content/consent.js`) 대신 쓸 문안 JSON (`content/consent.example.json` 형식) |
    | `COMO_APPLY_URL` | Text | 선택. 기본 `https://cco-mho.pages.dev/` |
 6. **재배포**(Deployments → Retry deployment). 바인딩·변수는 재배포 후 적용된다.
-7. **관리자 계정**: 아래 '관리자 지정' 참고
+7. **관리자 계정**: 아래 '관리자 지정' 참고(사이트에서 처리, 콘솔 불필요)
 
 ### 로그인 방식: 휴대전화 번호 + PIN 6자리
 
@@ -70,13 +70,25 @@ test/                    자동 테스트
 
 ### 관리자 지정
 
-1. 사이트에서 관리자 본인 번호로 `참여 등록`(PIN 설정).
-2. 대시보드 D1 콘솔(`login-db` → Console)에서 실행 (`npm run admin:create -- --phone 010XXXXXXXX`가 같은 SQL을 출력):
-   ```sql
-   UPDATE users SET role = 'manager', is_selected = 0 WHERE phone = '010XXXXXXXX';
-   DELETE FROM registrations WHERE user_id = (SELECT id FROM users WHERE phone = '010XXXXXXXX');
-   ```
-   운영 담당은 `role = 'staff'`. 관리자 PIN 분실 시 다른 관리자가 없으면 같은 방식으로 다시 등록·지정한다.
+1. 사이트에서 관리자 본인 번호로 `참여 등록`(PIN 설정) 후 로그인.
+2. **첫 관리자**: `/admin/setup`을 열고 Cloudflare Pages에 설정한 `SESSION_SECRET` 값을 입력하면 지금 계정이 전체 관리자가 된다. 전체 관리자가 한 명이라도 있으면 이 화면은 닫힌다(404).
+3. **다른 관리자**: 그 사람이 참여 등록을 한 뒤, 전체 관리자가 `참여자 → 상세 → 관리자 지정`에서 운영 담당/전체 관리자로 지정. `관리자` 메뉴에서 권한 변경·해제. 마지막 전체 관리자는 해제할 수 없다.
+
+| 권한 | 할 수 있는 일 |
+|---|---|
+| 운영 담당(staff) | 프로그램·회차·출석, Grow 선정, 공지, Link 배정 (참여자 전화번호는 가림) |
+| 전체 관리자(manager) | 위 + 접수·선정, 참여자 정보, PIN 초기화, 연락처 확인, 꼬모 연동, 관리자 지정, 변경 기록 |
+
+### 성장(Grow): 희망 신청 → 관리자 선정
+
+- 참여자는 회차별로 `희망 신청`만 한다(선정 대기). 선정 대기 중에는 본인이 취소할 수 있다.
+- 관리자는 `Grow 선정` 메뉴(또는 회차 화면)에서 선정·미선정·대기로 되돌리기를 한다. 정원은 선정 인원 기준이며 정원을 넘겨 선정할 수 없다.
+- 선정된 신청만 참여자 일정(나의 현황)에 표시되고 출석을 기록할 수 있다.
+
+### 공지
+
+- 관리자 `공지` 메뉴에서 작성·수정·삭제. 공지마다 공개 범위를 고른다: `전체 공개`(홈 메뉴 `공지`) 또는 `선정 참여자만`(로그인한 선정 참여자). 고정 공지는 목록 맨 위.
+- 선정 참여자의 나의 현황에 최근 공지 3건이 보인다.
 
 `APP_ENV`를 지정하지 않으면 운영 모드다. 운영 모드에서 `SESSION_SECRET`이 없거나 `DB` 바인딩이 없으면 화면에 설정 오류 문구가 표시된다.
 
@@ -117,11 +129,11 @@ npm run dev        # wrangler pages dev (workerd + 로컬 D1) http://localhost:8
 
 | 영역 | 대상 | 내용 |
 |---|---|---|
-| 공개 `/` | 누구나 | 사업명, L/O/G·IN 프로그램 목록, 참여 등록. 꼬모 링크·상담 버튼 없음 |
+| 공개 `/`, `/notices` | 누구나 | 사업명, L/O/G 프로그램 목록, 전체 공개 공지, 참여 등록. 꼬모 링크·상담 버튼 없음 |
 | `/me` | 등록자 | 내 정보·번호·PIN 변경. 미선정이면 참여자 전용 기능 없음 |
 | `/me/programs` 등 | 선정 참여자 | 나의 현황 4개 영역, Link 일정, Grow 신청, O 마음 → 전문 심리상담 → 상담신청하기 |
-| `/admin` | staff | 프로그램·회차·출석·Grow 신청 관리, Link 배정. 전화번호는 가림 |
-| `/admin` | manager | 위 + 접수·선정, 참여자 정보, 꼬모 매핑, 변경 기록 |
+| `/admin` | staff | 프로그램·회차·출석, Grow 선정, 공지, Link 배정. 전화번호는 가림 |
+| `/admin` | manager | 위 + 접수·선정, 참여자 정보, PIN 초기화, 꼬모 매핑, 관리자 지정, 변경 기록 |
 
 ## 꼬모 연동 상태
 

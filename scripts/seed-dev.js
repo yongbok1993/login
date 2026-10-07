@@ -49,6 +49,13 @@ export async function seed(db) {
     });
   }
   for (const id of users.slice(0, 3)) await setSelected(db, null, id, true);
+  // Grow 희망 신청(선정 대기)과 공지
+  const grow = await get(db, "SELECT s.id FROM program_sessions s JOIN programs p ON p.id = s.program_id WHERE p.code = 'grow-career' ORDER BY s.id LIMIT 1");
+  await run(db, `INSERT INTO enrollments (user_id, session_id, source, status, selection, created_at) VALUES (?, ?, 'select', 'active', 'pending', ?)`,
+    users[1], grow.id, now);
+  await run(db, `INSERT INTO notices (title, body, audience, is_pinned, created_at, updated_at) VALUES
+    ('테스트 공지(전체)', '개발용 테스트 공지입니다.', 'public', 0, ?, ?), ('테스트 공지(참여자)', '개발용 테스트 공지입니다.', 'participants', 1, ?, ?)`,
+  now, now, now, now);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

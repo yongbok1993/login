@@ -137,7 +137,9 @@ try {
   const blockCdn = (pg) => pg.route('https://t1.daumcdn.net/**', (r) => r.abort());
   const anon = await browser.newPage();
   await blockCdn(anon);
-  for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/register', 'register']]) failures += await check(anon, u, l);
+  for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/register', 'register'], ['/notices', 'notices'], ['/notices/1', 'notice']]) {
+    failures += await check(anon, u, l);
+  }
   failures += await check(anon, '/account/pin', 'login-redirect');
   const p = await browser.newPage();
   await blockCdn(p);
@@ -154,7 +156,9 @@ try {
   await login(m, '01000000000');
   for (const [u, l] of [['/admin', 'admin'], ['/admin/participants', 'admin-participants'], ['/admin/participants/2', 'admin-participant'],
     ['/admin/programs', 'admin-programs'], ['/admin/programs/1', 'admin-program'], ['/admin/sessions/1', 'admin-session'],
-    ['/admin/programs/new', 'admin-program-new'], ['/admin/link', 'admin-link'], ['/admin/como', 'admin-como'], ['/admin/audit', 'admin-audit']]) {
+    ['/admin/programs/new', 'admin-program-new'], ['/admin/link', 'admin-link'], ['/admin/como', 'admin-como'], ['/admin/audit', 'admin-audit'],
+    ['/admin/grow', 'admin-grow'], ['/admin/grow?status=all', 'admin-grow-all'], ['/admin/notices', 'admin-notices'],
+    ['/admin/notices/new', 'admin-notice-new'], ['/admin/staff', 'admin-staff'], [`/admin/sessions/${growId}`, 'admin-session-grow']]) {
     failures += await check(m, u, l);
   }
 } finally {

@@ -158,45 +158,165 @@ test('Link: 선정 시 전체 자동 배정, 신청 버튼 없음, 재실행·�
   assert.ok((await app.sql.get('SELECT 1 FROM enrollments WHERE session_id = ? AND user_id = ?', s1, uid)));
 });
 
-test('Grow: 확인 → 완료, 개인정보 재입력 없음, 중복·정원·마감 차단', async (t) => {
+test('Grow: 희망 신청(개인정보 재입력 없음) → 관리자 선정 시에만 일정 반영, 정원은 선정 인원 기준, 중복·마감 차단', async (t) => {
   const app = await startApp();
   t.after(app.close);
   const a = await addParticipant(app.db, { name: '참여자가', phone: '01050000001', selected: true });
   await addParticipant(app.db, { name: '참여자나', phone: '01050000002', selected: true });
+  await addParticipant(app.db, { name: '참여자다', phone: '01050000003', selected: true });
   const sid = await addSession(app.db, 'grow-career', { round_no: 1, capacity: 1 });
   const closed = await addSession(app.db, 'grow-craft', { round_no: 1, is_closed: 1 });
 
   const c = app.client();
   await c.login('01050000001');
   let r = await c.get(`/me/grow/${sid}`);
-  assert.equal(r.status, 200);
-  assert.match(r.text, /신청 확인/);
+  assert.match(r.text, /희망 신청/);
   assert.match(r.text, /참여자가/);
   assert.match(r.text, /일정 미정/);
-  assert.ok(!/name="(name|phone|address|birth_date|code)"/.test(r.text), '개인정보·인증 입력란이 없어야 함');
+  assert.ok(!/name="(name|phone|address|birth_date|pin|code)"/.test(r.text), '개인정보·인증 입력란이 없어야 함');
   r = await c.post(`/me/grow/${sid}`);
   assert.equal(r.location, `/me/grow/${sid}/done`);
-  r = await c.get(r.location);
-  assert.match(r.text, /신청 완료/);
-  r = await c.post(`/me/grow/${sid}`);
-  assert.equal(r.status, 409);
-  assert.match(r.text, /이미 신청한 회차/);
-  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments WHERE user_id = ?', a)).n, 1);
+  assert.match((await c.get(r.location)).text, /희망 신청 완료/);
+  assert.equal((await c.post(`/me/grow/${sid}`)).status, 409, '중복 신청 차단');
+  assert.match((await c.get('/me/programs')).text, /선정 대기/);
+  let me = await c.get('/me');
+  assert.ok(!me.text.slice(me.text.indexOf('참여할 프로그램'), me.text.indexOf('전문 심리상담')).includes('직업·적성 체험 1회차'), '선정 전에는 일정에 없음');
+  assert.match(me.text, /희망 신청 1건 선정 대기/);
 
+  // 정원 1이어도 희망 신청은 받는다(선정 인원 기준)
   const c2 = app.client();
   await c2.login('01050000002');
-  r = await c2.post(`/me/grow/${sid}`);
-  assert.equal(r.status, 409);
-  assert.match(r.text, /정원이 마감/);
-  r = await c2.post(`/me/grow/${closed}`);
-  assert.equal(r.status, 409);
-  assert.match(r.text, /마감된 회차/);
-  r = await c2.get('/me/programs');
-  assert.match(r.text, /정원 마감/);
+  assert.equal((await c2.post(`/me/grow/${sid}`)).status, 303);
+  assert.match((await c2.post(`/me/grow/${closed}`)).text, /마감된 회차/);
 
+  await addManager(app.db);
+  const m = app.client();
+  await m.login('01099990000');
+  r = await m.get('/admin/grow');
+  assert.match(r.text, /참여자가/);
+  assert.match(r.text, /참여자나/);
+  const ea = (await app.sql.get('SELECT id FROM enrollments WHERE user_id = ? AND session_id = ?', a, sid)).id;
+  const eb = (await app.sql.get("SELECT e.id FROM enrollments e JOIN users u ON u.id = e.user_id WHERE u.phone = '01050000002'")).id;
+  // 선정 전에는 출석 기록 불가
+  await m.post(`/admin/enrollments/${ea}/attendance`, { status: 'attended' });
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM attendance')).n, 0);
+  await m.post(`/admin/enrollments/${ea}/selection`, { decision: 'selected' });
+  r = await m.post(`/admin/enrollments/${eb}/selection`, { decision: 'selected' });
+  assert.match((await m.get(r.location)).text, /정원이 찼습니다/);
+  await m.post(`/admin/enrollments/${eb}/selection`, { decision: 'not_selected' });
+  const sel = await app.sql.all('SELECT id, selection FROM enrollments WHERE session_id = ? ORDER BY id', sid);
+  assert.deepEqual(sel.map((x) => x.selection), ['selected', 'not_selected']);
+
+  me = await c.get('/me');
+  assert.match(me.text.slice(me.text.indexOf('참여할 프로그램'), me.text.indexOf('전문 심리상담')), /직업·적성 체험 1회차/);
+  assert.match((await c.get('/me/programs')).text, /<span class="chip">선정<\/span>/);
+  assert.match((await c2.get('/me/programs')).text, /미선정/);
+  // 정원이 찬 뒤 새 희망 신청은 정원 마감
+  const c3 = app.client();
+  await c3.login('01050000003');
+  assert.match((await c3.post(`/me/grow/${sid}`)).text, /정원이 마감/);
   // Link 회차는 Grow 신청 경로로 신청할 수 없다
   const link = await addSession(app.db, 'link-cooking');
-  assert.equal((await c2.post(`/me/grow/${link}`)).status, 404);
+  assert.equal((await c3.post(`/me/grow/${link}`)).status, 404);
+  assert.ok((await app.sql.all('SELECT action FROM audit_log')).some((x) => x.action === 'grow.selection'));
+});
+
+test('Grow: 선정 대기 중인 희망 신청은 본인이 취소 가능, 선정 후에는 프로그램 설정을 따름', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const uid = await addParticipant(app.db, { phone: '01051000001', selected: true });
+  const sid = await addSession(app.db, 'grow-craft', { round_no: 1 });
+  const c = app.client();
+  await c.login('01051000001');
+  await c.post(`/me/grow/${sid}`);
+  const eid = (await app.sql.get('SELECT id FROM enrollments WHERE user_id = ?', uid)).id;
+  await c.post(`/me/grow/enrollments/${eid}/cancel`);
+  assert.equal((await app.sql.get('SELECT status FROM enrollments WHERE id = ?', eid)).status, 'cancelled');
+  await c.post(`/me/grow/${sid}`);
+  assert.equal((await app.sql.get('SELECT status, selection FROM enrollments WHERE id = ?', eid)).selection, 'pending', '다시 신청하면 선정 대기');
+  await app.sql.run("UPDATE enrollments SET selection = 'selected' WHERE id = ?", eid);
+  await c.post(`/me/grow/enrollments/${eid}/cancel`);
+  assert.equal((await app.sql.get('SELECT status FROM enrollments WHERE id = ?', eid)).status, 'active', 'self_cancel 꺼짐: 선정 후 본인 취소 불가');
+});
+
+test('공지: 공개 범위별 노출, 관리자 작성·수정·삭제', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  await addManager(app.db);
+  await addParticipant(app.db, { phone: '01052000001', selected: true });
+  await addParticipant(app.db, { phone: '01052000002' });
+  const m = app.client();
+  await m.login('01099990000');
+  let r = await m.post('/admin/notices/new', { title: '', audience: 'x' });
+  assert.equal(r.status, 422);
+  await m.post('/admin/notices/new', { title: '전체 공지 제목', body: '첫 줄\n<script>x</script>', audience: 'public' });
+  await m.post('/admin/notices/new', { title: '참여자 공지 제목', body: '참여자만', audience: 'participants', is_pinned: '1' });
+  const [pub, part] = (await app.sql.all('SELECT id FROM notices ORDER BY id')).map((x) => x.id);
+
+  const anon = app.client();
+  r = await anon.get('/notices');
+  assert.match(r.text, /전체 공지 제목/);
+  assert.ok(!r.text.includes('참여자 공지 제목'));
+  assert.equal((await anon.get(`/notices/${part}`)).status, 404);
+  r = await anon.get(`/notices/${pub}`);
+  assert.match(r.text, /&lt;script&gt;/, '본문은 이스케이프');
+  assert.match((await anon.get('/')).text, /href="\/notices"/);
+
+  const unselected = app.client();
+  await unselected.login('01052000002');
+  assert.equal((await unselected.get(`/notices/${part}`)).status, 404, '미선정 등록자는 참여자 공지 못 봄');
+
+  const p = app.client();
+  await p.login('01052000001');
+  r = await p.get('/me');
+  assert.match(r.text, /참여자 공지 제목/);
+  assert.match(r.text, /전체 공지 제목/);
+  assert.ok(r.text.indexOf('참여자 공지 제목') < r.text.indexOf('전체 공지 제목'), '고정 공지가 위');
+  assert.equal((await p.get(`/notices/${part}`)).status, 200);
+  assert.equal((await p.get('/admin/notices')).status, 403);
+  assert.equal((await p.post(`/admin/notices/${pub}/delete`)).status, 403);
+
+  await m.post(`/admin/notices/${pub}`, { title: '수정된 제목', body: '', audience: 'participants' });
+  assert.equal((await anon.get(`/notices/${pub}`)).status, 404, '참여자 공지로 바꾸면 비공개');
+  await m.post(`/admin/notices/${part}/delete`);
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM notices')).n, 1);
+});
+
+test('첫 관리자 지정(/admin/setup)·권한 지정: 관리자가 없을 때만, SESSION_SECRET 확인, 마지막 관리자 보호', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const uid = await addParticipant(app.db, { name: '기관담당', phone: '01053000001' });
+  const other = await addParticipant(app.db, { name: '다른사람', phone: '01053000002' });
+  const c = app.client();
+  assert.equal((await c.get('/admin/setup')).location, '/login');
+  await c.login('01053000001');
+  let r = await c.post('/admin/setup', { secret: 'wrong' });
+  assert.equal(r.status, 422);
+  r = await c.post('/admin/setup', { secret: app.cfg.sessionSecret });
+  assert.equal(r.location, '/admin');
+  assert.equal((await app.sql.get('SELECT role FROM users WHERE id = ?', uid)).role, 'manager');
+  await c.get('/admin');
+  assert.equal((await c.get('/admin/setup')).status, 404, '관리자가 생기면 닫힘');
+
+  // 다른 사람이 같은 경로로 관리자가 될 수 없음
+  const o = app.client();
+  await o.login('01053000002');
+  assert.equal((await o.post('/admin/setup', { secret: app.cfg.sessionSecret })).status, 404);
+
+  // 전체 관리자가 다른 등록자를 운영 담당으로 지정 → 참여자 목록에서 빠짐
+  await c.post(`/admin/users/${other}/role`, { role: 'staff' });
+  assert.equal((await app.sql.get('SELECT role FROM users WHERE id = ?', other)).role, 'staff');
+  assert.ok(!(await c.get('/admin/participants')).text.includes('다른사람'));
+  assert.match((await c.get('/admin/staff')).text, /다른사람/);
+  // 마지막 전체 관리자는 해제 불가
+  r = await c.post(`/admin/users/${uid}/role`, { role: 'participant' });
+  assert.equal((await app.sql.get('SELECT role FROM users WHERE id = ?', uid)).role, 'manager');
+  // 운영 담당은 권한 변경 불가
+  const s = app.client();
+  await s.login('01053000002');
+  assert.equal((await s.post(`/admin/users/${uid}/role`, { role: 'participant' })).status, 403);
+  assert.equal((await s.get('/admin/grow')).status, 200);
+  assert.equal((await s.get('/admin/notices')).status, 200);
 });
 
 test('상담신청하기: 선정 참여자의 O 마음 → 전문 심리상담에만, 서버 확인 후 꼬모로 이동(번호 미전달)', async (t) => {

@@ -1,7 +1,7 @@
 import { all, batch, get, run, stmt } from '../lib/db.js';
 import { isValidDate, isValidTime, nowIso } from '../lib/time.js';
 import { audit, auditStmt } from './audit.js';
-import { autoAssignLink } from './enrollments.js';
+import { autoAssignLink, counted } from './enrollments.js';
 
 export const ASSIGN_MODES = {
   auto: '전체 자동 배정',
@@ -75,14 +75,16 @@ export async function updateProgram(db, actorId, id, p) {
 
 export function listSessions(db, programId) {
   return all(db, `SELECT s.*,
-      (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND e.status = 'active') AS active_count
+      (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND ${counted('e')}) AS active_count,
+      (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND e.status = 'active' AND e.selection = 'pending') AS pending_count
     FROM program_sessions s WHERE s.program_id = ?
     ORDER BY s.date IS NULL, s.date, s.start_time, s.round_no, s.id`, programId);
 }
 
 export function getSession(db, id) {
   return get(db, `SELECT s.*, p.name AS program_name, p.theme, p.assign_mode, p.detail AS program_detail, p.self_cancel,
-      (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND e.status = 'active') AS active_count
+      (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND ${counted('e')}) AS active_count,
+      (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND e.status = 'active' AND e.selection = 'pending') AS pending_count
     FROM program_sessions s JOIN programs p ON p.id = s.program_id WHERE s.id = ?`, id);
 }
 
@@ -153,6 +155,6 @@ export function linkProgramStats(db) {
   return all(db, `SELECT p.id, p.name,
       (SELECT COUNT(*) FROM program_sessions s WHERE s.program_id = p.id AND s.is_cancelled = 0) AS session_count,
       (SELECT COUNT(*) FROM enrollments e JOIN program_sessions s ON s.id = e.session_id
-        WHERE s.program_id = p.id AND e.status = 'active') AS enrollment_count
+        WHERE s.program_id = p.id AND ${counted('e')}) AS enrollment_count
     FROM programs p WHERE p.assign_mode = 'auto' ORDER BY p.sort_order`);
 }

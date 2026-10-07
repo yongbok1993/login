@@ -3,6 +3,7 @@ import { formatPhone } from '../lib/phone.js';
 import { formatDate, formatDateTime, formatTimeRange } from '../lib/time.js';
 import { THEMES } from '../site.js';
 import { addressFields, POSTCODE_SCRIPTS } from './address.js';
+import { noticeItems } from './notices.js';
 import { csrfField, errorSummary, field, layout, textInput, themeDot } from './layout.js';
 
 function page(ctx, title, inner, scripts = []) {
@@ -63,7 +64,7 @@ export function notSelectedPage(ctx) {
     </div>`);
 }
 
-export function statusPage(ctx, { next, upcoming, attended, counseling }) {
+export function statusPage(ctx, { next, upcoming, attended, counseling, pendingWishes = 0, notices = [] }) {
   const byTheme = {};
   for (const u of upcoming) (byTheme[u.theme] ||= []).push(u);
   return page(ctx, '나의 현황', html`
@@ -88,6 +89,7 @@ export function statusPage(ctx, { next, upcoming, attended, counseling }) {
               </ul>
             </li>`)}
         </ul>` : html`<p>없음</p>`}
+        ${pendingWishes ? html`<p class="small"><a href="/me/programs#t-g">G 성장 희망 신청 ${pendingWishes}건 선정 대기</a></p>` : ''}
       </div>
 
       ${counselingCard(counseling)}
@@ -98,6 +100,11 @@ export function statusPage(ctx, { next, upcoming, attended, counseling }) {
           <li>${themeDot(a.theme)}${a.program_name} <b>${a.count}회</b></li>`)}</ul>` : html`<p>없음</p>`}
       </div>
     </div>
+    ${notices.length ? html`<div class="card notices-card">
+      <h2 class="card-title">공지</h2>
+      ${noticeItems(notices)}
+      <p class="small"><a href="/notices">전체 보기</a></p>
+    </div>` : ''}
     <p class="actions"><a class="btn" href="/me/programs">프로그램</a></p>`);
 }
 
@@ -107,13 +114,15 @@ function sessionLine(s) {
 
 function growAction(ctx, s) {
   if (s.my_status === 'active') {
-    return html`<span class="chip">신청 완료</span>
-      ${s.self_cancel ? html`<form method="post" action="/me/grow/enrollments/${s.my_enrollment_id}/cancel" class="inline-form">
-        ${csrfField(ctx)}<button type="submit" class="linklike">신청 취소</button></form>` : ''}`;
+    const cancel = (label) => html`<form method="post" action="/me/grow/enrollments/${s.my_enrollment_id}/cancel" class="inline-form">
+      ${csrfField(ctx)}<button type="submit" class="linklike">${label}</button></form>`;
+    if (s.my_selection === 'pending') return html`<span class="chip warn">선정 대기</span>${cancel('희망 취소')}`;
+    if (s.my_selection === 'not_selected') return html`<span class="chip muted-chip">미선정</span>`;
+    return html`<span class="chip">선정</span>${s.self_cancel ? cancel('참여 취소') : ''}`;
   }
   if (s.is_closed) return html`<span class="chip muted-chip">마감</span>`;
   if (s.capacity !== null && s.active_count >= s.capacity) return html`<span class="chip muted-chip">정원 마감</span>`;
-  return html`<a class="btn small" href="/me/grow/${s.id}">신청</a>`;
+  return html`<a class="btn small" href="/me/grow/${s.id}">희망 신청</a>`;
 }
 
 export function programsPage(ctx, { groups, upcoming, growSessions }) {
@@ -161,9 +170,10 @@ export function counselingPage(ctx, counseling) {
 }
 
 const BLOCKER_MESSAGES = {
+  forbidden: '신청할 수 없는 회차입니다.',
   closed: '마감된 회차입니다.',
   full: '정원이 마감되었습니다.',
-  duplicate: '이미 신청한 회차입니다.',
+  duplicate: '이미 희망 신청한 회차입니다.',
   past: '지난 회차입니다.',
   cancelled: '취소된 회차입니다.',
 };
@@ -183,26 +193,27 @@ function sessionSummary(user, s) {
 }
 
 export function growConfirmPage(ctx, s, blocker) {
-  return page(ctx, '신청 확인', html`
+  return page(ctx, '희망 신청', html`
     <p class="crumb"><a href="/me/programs">프로그램</a> › G 성장</p>
-    <h1 class="page-title">신청 확인</h1>
+    <h1 class="page-title">희망 신청</h1>
     <div class="card">
       ${sessionSummary(ctx.user, s)}
       ${blocker ? html`<p class="error" role="alert">${blockerMessage(blocker)}</p>
         <p class="actions"><a class="btn ghost" href="/me/programs">돌아가기</a></p>`
         : html`<form method="post" action="/me/grow/${s.id}" class="actions">
           ${csrfField(ctx)}
-          <button type="submit" class="btn">신청하기</button>
+          <button type="submit" class="btn">희망 신청하기</button>
           <a class="btn ghost" href="/me/programs">취소</a>
         </form>`}
     </div>`);
 }
 
 export function growDonePage(ctx, s) {
-  return page(ctx, '신청 완료', html`
-    <h1 class="page-title">신청 완료</h1>
+  return page(ctx, '희망 신청 완료', html`
+    <h1 class="page-title">희망 신청 완료</h1>
     <div class="card">
       ${sessionSummary(ctx.user, s)}
+      <p>관리자가 선정하면 나의 현황 일정에 표시됩니다. 선정 결과는 프로그램 화면에서 확인할 수 있습니다.</p>
       <p class="actions"><a class="btn" href="/me">나의 현황</a><a class="btn ghost" href="/me/programs">프로그램</a></p>
     </div>`);
 }
