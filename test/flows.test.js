@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { autoAssignLink } from '../src/services/enrollments.js';
-import { addManager, addParticipant, addSession, startApp } from './helpers.js';
+import { addManager, addParticipant, addSession, startApp, TEST_PIN } from './helpers.js';
 
 const BANNED = [
   '온라인에서 이야기가 시작되고', '사람과 사람의 관계에 로그인합니다', '등록은 한 번이면 충분합니다', '그다음은 로그인만',
@@ -27,76 +27,85 @@ test('공개 홈: L/O/G 목록, 꼬모·상담 버튼·참여 절차·시안 설
   assert.match(r.headers.get('content-security-policy'), /script-src 'none'/);
 });
 
-test('최초 등록: 인증 → 정보 입력 → 계정 연결, 같은 번호 재등록 시 새 계정을 만들지 않음', async (t) => {
+const REG = { name: '홍길동', phone: '010-1111-2222', address: '경기도 용인시 처인구 테스트로 1', birth_date: '1970.3.5',
+  pin: '258147', pin_confirm: '258147', consent: 'privacy' };
+
+test('최초 등록: 한 화면에서 연락처·이름·주소·생년월일·PIN → 계정 연결, 같은 번호 재등록 불가', async (t) => {
   const app = await startApp();
   t.after(app.close);
   const c = app.client();
-  await c.get('/register');
-  let r = await c.post('/register', { phone: '010-1111-2222' });
-  assert.equal(r.status, 303);
-  assert.equal(r.location, '/verify');
-  r = await c.post('/verify', { code: '000000' });
-  assert.equal(r.status, 422);
-  assert.match(r.text, /일치하지 않습니다/);
-  r = await c.post('/verify', { code: c.lastCode('01011112222') });
-  assert.equal(r.location, '/register/details');
+  let r = await c.get('/register');
+  for (const id of ['name', 'phone', 'address', 'birth_date', 'pin', 'pin_confirm']) assert.match(r.text, new RegExp(`id="${id}"`), id);
+  assert.ok(!/인증번호/.test(r.text));
 
-  r = await c.get('/register/details');
-  assert.match(r.text, /인증 완료/);
-  r = await c.post('/register/details', { name: '', address: '', birth_date: '19991399' });
+  r = await c.post('/register', { name: '', phone: '02-123', address: '', birth_date: '19991399', pin: '123456', pin_confirm: '1' });
   assert.equal(r.status, 422);
-  assert.match(r.text, /필수 항목에 동의해 주세요/);
-  assert.match(r.text, /생년월일을 확인해 주세요/);
-  assert.match(r.text, /주소를 입력해 주세요/);
-  r = await c.post('/register/details', { name: '홍길동', address: '경기도 용인시 처인구 테스트로 1', birth_date: '1970.3.5', consent: 'privacy' });
+  for (const msg of ['이름을 입력해 주세요', '휴대전화 번호를 확인해 주세요', '주소를 입력해 주세요', '생년월일을 확인해 주세요',
+    '연속된 숫자는 사용할 수 없습니다', '필수 항목에 동의해 주세요']) assert.match(r.text, new RegExp(msg), msg);
+  assert.ok(!r.text.includes('value="123456"'), 'PIN 값을 다시 출력하지 않음');
+  r = await c.post('/register', { ...REG, pin_confirm: '258148' });
+  assert.match(r.text, /PIN이 서로 다릅니다/);
+  r = await c.post('/register', { ...REG, pin: '700305', pin_confirm: '700305' });
+  assert.match(r.text, /생년월일은 사용할 수 없습니다/);
+
+  r = await c.post('/register', REG);
   assert.equal(r.location, '/me');
-
   const users = (await app.sql.all('SELECT * FROM users'));
   assert.equal(users.length, 1);
   assert.equal(users[0].phone, '01011112222');
   assert.equal(users[0].address, '경기도 용인시 처인구 테스트로 1');
   assert.equal(users[0].birth_date, '1970-03-05');
+  assert.match(users[0].pin_hash, /^h1\$/);
+  assert.ok(!users[0].pin_hash.includes('258147'));
+  assert.equal(users[0].phone_confirmed_at, null, '등록만으로는 번호 확인 안 됨');
   assert.equal((await app.sql.get('SELECT COUNT(*) n FROM registrations')).n, 1);
-  const consent = (await app.sql.get('SELECT * FROM consents'));
-  assert.equal(consent.agreed, 1);
-  assert.equal(consent.doc_version, 'test-v1');
 
-  // 미선정 상태의 나의 현황: 심사·선정 단계 노출 없음, 참여자 전용 기능 없음
   r = await c.get('/me');
   assert.match(r.text, /선정 후 이용할 수 있습니다/);
   for (const bad of ['접수', '검토', '초기상담', '사례회의', '상담신청하기']) assert.ok(!r.text.includes(bad), bad);
 
-  // 다른 기기에서 같은 번호로 '참여 등록' → 로그인으로 처리, 새 계정 없음
   const c2 = app.client();
   await c2.get('/register');
-  await app.sql.run('UPDATE otp_codes SET created_at = ?', new Date(Date.now() - 120000).toISOString());
-  await c2.post('/register', { phone: '01011112222' });
-  r = await c2.post('/verify', { code: c2.lastCode('01011112222') });
-  assert.equal(r.location, '/me');
+  r = await c2.post('/register', { ...REG, name: '다른사람' });
+  assert.equal(r.status, 409);
+  assert.match(r.text, /이미 등록된 번호입니다/);
   assert.equal((await app.sql.get('SELECT COUNT(*) n FROM users')).n, 1);
+
+  // 등록한 번호와 PIN으로 로그인
+  const c3 = app.client();
+  r = await c3.login('01011112222', '258147');
+  assert.equal(r.location, '/me');
 });
 
-test('인증번호 입력 5회 실패 시 재발급 필요', async (t) => {
+test('로그인: 실패 문구는 등록 여부와 무관, 번호별 5회 실패 시 잠금', async (t) => {
   const app = await startApp();
   t.after(app.close);
+  await addParticipant(app.db, { phone: '01022223333' });
   const c = app.client();
   await c.get('/login');
-  await c.post('/login', { phone: '01022223333' });
-  let r;
-  for (let i = 0; i < 5; i++) r = await c.post('/verify', { code: '999999' === c.lastCode('01022223333') ? '999998' : '999999' });
-  assert.match(r.text, /입력 횟수를 초과/);
-  r = await c.post('/verify', { code: c.lastCode('01022223333') });
-  assert.equal(r.status, 422);
+  const unknown = await c.post('/login', { phone: '01099998888', pin: '258147' });
+  const wrong = await c.post('/login', { phone: '01022223333', pin: '000001' });
+  assert.equal(unknown.status, 422);
+  assert.match(unknown.text, /휴대전화 번호 또는 PIN이 맞지 않습니다/);
+  assert.match(wrong.text, /휴대전화 번호 또는 PIN이 맞지 않습니다/);
+  for (let i = 0; i < 4; i++) await c.post('/login', { phone: '01022223333', pin: '000001' });
+  const locked = await c.post('/login', { phone: '01022223333', pin: TEST_PIN });
+  assert.match(locked.text, /잠시 잠겼습니다/);
+  assert.equal(locked.headers.get('location'), null);
+  // 잠기지 않은 다른 계정은 로그인 가능
+  await addParticipant(app.db, { phone: '01022224444' });
+  assert.equal((await app.client().login('01022224444')).location, '/me');
 });
 
 test('CSRF 토큰 없는 POST 거부', async (t) => {
   const app = await startApp();
   t.after(app.close);
+  await addParticipant(app.db, { phone: '01011112222' });
   const c = app.client();
   await c.get('/login');
-  const r = await c.post('/login', { phone: '01011112222' }, { csrf: false });
+  const r = await c.post('/login', { phone: '01011112222', pin: TEST_PIN }, { csrf: false });
   assert.equal(r.status, 403);
-  assert.equal(app.sent.length, 0);
+  assert.equal(r.location, null);
 });
 
 test('미선정 계정은 참여자 전용 기능(프로그램·Grow 신청·상담 링크)에 접근 불가', async (t) => {
@@ -340,7 +349,7 @@ test('관리자 배정: internal(통합사례회의) 회차에는 배정 불가'
   assert.match((await p.get('/me')).text, /지역사회 인식개선 캠페인/);
 });
 
-test('운영 모드: 개발 표시 없음, 등록 화면 열림, 문자 미설정이면 인증번호 미발송, Secure 쿠키', async (t) => {
+test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async (t) => {
   const { createApp } = await import('../src/app.js');
   const { createD1 } = await import('./d1-shim.js');
   const db = createD1();
@@ -350,28 +359,24 @@ test('운영 모드: 개발 표시 없음, 등록 화면 열림, 문자 미설�
   const fetchPage = (path, init) => app.fetch(new Request(`https://login-cpn.pages.dev${path}`, init), env, {});
 
   let r = await fetchPage('/');
-  let text = await r.text();
+  const text = await r.text();
   assert.equal(r.status, 200);
   assert.ok(!text.includes('개발 환경'));
   assert.ok(text.includes('요리교실'));
   assert.equal(r.headers.get('set-cookie'), null, '공개 홈은 세션을 만들지 않음');
 
   r = await fetchPage('/register');
-  assert.match(await r.text(), /인증번호 받기/);
-
-  r = await fetchPage('/login');
   const cookie = r.headers.get('set-cookie');
   assert.match(cookie, /Secure/);
   const csrf = (await r.text()).match(/name="_csrf" value="([^"]+)"/)[1];
-  r = await fetchPage('/login', {
+  r = await fetchPage('/register', {
     method: 'POST',
     headers: { cookie: cookie.split(';')[0], 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ _csrf: csrf, phone: '01012345678' }).toString(),
+    body: new URLSearchParams({ _csrf: csrf, ...REG }).toString(),
   });
-  text = await r.text();
-  assert.equal(r.status, 422);
-  assert.match(text, /인증 문자를 보낼 수 없습니다/);
-  assert.equal((await db.prepare('SELECT COUNT(*) n FROM otp_codes').first()).n, 0);
+  assert.equal(r.status, 303);
+  assert.equal(r.headers.get('location'), '/me');
+  assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '미확정');
 });
 
 test('운영 모드 설정 오류: SESSION_SECRET·DB 바인딩 누락을 알려 준다', async () => {
@@ -392,14 +397,11 @@ test('동의문 미설정이면 필수 동의 1개를 받고 문안 버전을 �
   t.after(app.close);
   assert.equal(loadConsent(app.cfg).version, '미확정');
   const c = app.client();
-  await c.get('/register');
-  await c.post('/register', { phone: '01013130001' });
-  await c.post('/verify', { code: c.lastCode('01013130001') });
-  let r = await c.get('/register/details');
+  let r = await c.get('/register');
   assert.match(r.text, /수집 항목: 이름, 주소, 생년월일, 휴대전화 번호/);
-  r = await c.post('/register/details', { name: '가', address: '주소', birth_date: '19800101' });
+  r = await c.post('/register', { ...REG, consent: [] });
   assert.equal(r.status, 422);
-  r = await c.post('/register/details', { name: '가', address: '주소', birth_date: '19800101', consent: 'privacy' });
+  r = await c.post('/register', REG);
   assert.equal(r.location, '/me');
   assert.equal((await app.sql.get('SELECT doc_version FROM consents')).doc_version, '미확정');
 });
@@ -420,15 +422,36 @@ test('내 정보: 이름·주소·생년월일 수정', async (t) => {
   assert.deepEqual({ ...u }, { name: '새이름', address: '새 주소', birth_date: '1965-12-31' });
 });
 
-test('인증번호 전체 일일 발송 상한', async (t) => {
-  const app = await startApp({ cfg: { smsDailyLimit: 2 } });
+test('PIN 변경·관리자 초기화: 임시 PIN으로 로그인하면 새 PIN을 정할 때까지 다른 화면 차단', async (t) => {
+  const app = await startApp();
   t.after(app.close);
-  for (const [i, phone] of ['01015150001', '01015150002', '01015150003'].entries()) {
-    const c = app.client();
-    await c.get('/login');
-    const r = await c.post('/login', { phone });
-    if (i < 2) assert.equal(r.status, 303);
-    else assert.match(r.text, /지금은 인증번호를 보낼 수 없습니다/);
-  }
-  assert.equal(app.sent.length, 2);
+  const uid = await addParticipant(app.db, { phone: '01016160001', selected: true });
+  const p = app.client();
+  await p.login('01016160001');
+  let r = await p.post('/account/pin', { current_pin: '000001', pin: '258369', pin_confirm: '258369' });
+  assert.match(r.text, /현재 PIN이 맞지 않습니다/);
+  r = await p.post('/account/pin', { current_pin: TEST_PIN, pin: '111111', pin_confirm: '111111' });
+  assert.match(r.text, /같은 숫자 반복/);
+  r = await p.post('/account/pin', { current_pin: TEST_PIN, pin: '258369', pin_confirm: '258369' });
+  assert.equal(r.location, '/me');
+  await p.get('/me');
+  assert.equal((await app.client().request('GET', '/me')).status, 303);
+  assert.equal((await app.client().login('01016160001', '258369')).location, '/me');
+
+  await addManager(app.db);
+  const m = app.client();
+  await m.login('01099990000');
+  r = await m.post(`/admin/participants/${uid}/pin-reset`);
+  const page = await m.get(r.location);
+  const temp = page.text.match(/임시 PIN: (\d{6})/)[1];
+  assert.equal((await p.get('/me')).location, '/login', '초기화하면 기존 로그인 종료');
+  const q = app.client();
+  r = await q.login('01016160001', temp);
+  assert.equal(r.location, '/account/pin');
+  assert.equal((await q.get('/me/programs')).location, '/account/pin');
+  r = await q.post('/account/pin', { current_pin: temp, pin: '814725', pin_confirm: '814725' });
+  assert.equal(r.location, '/me');
+  assert.equal((await q.get('/me/programs')).status, 200);
+  const actions = (await app.sql.all('SELECT action FROM audit_log')).map((x) => x.action);
+  assert.ok(actions.includes('user.pin_reset') && actions.includes('user.pin_change'));
 });

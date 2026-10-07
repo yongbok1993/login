@@ -228,7 +228,7 @@ export function profilePage(ctx, { user, consents, consentDoc, values, errors = 
     <div class="card">
       <h2 class="card-title">연락처</h2>
       <p>${formatPhone(user.phone)}</p>
-      <p class="actions"><a class="btn ghost" href="/me/phone">번호 변경</a></p>
+      <p class="actions"><a class="btn ghost" href="/me/phone">번호 변경</a><a class="btn ghost" href="/account/pin">PIN 변경</a></p>
     </div>
 
     <div class="card">

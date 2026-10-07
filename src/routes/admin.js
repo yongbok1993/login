@@ -9,8 +9,11 @@ import {
   parseSessionForm, sessionRoster, updateProgram, updateSession,
 } from '../services/programs.js';
 import {
-  getRegistration, getUser, listConsents, listRegistrants, listSelectedParticipants, setInternalStatus, setSelected,
+  confirmPhone, getRegistration, getUser, listConsents, listRegistrants, listSelectedParticipants, resetPin, setInternalStatus,
+  setSelected,
 } from '../services/users.js';
+import { hashPin, temporaryPin } from '../lib/pin.js';
+import { clearPhoneFailures } from '../services/login.js';
 import * as views from '../views/admin.js';
 import { deny, field, fieldList, intParam, redirect, render, requireManager, requireStaff } from './helpers.js';
 
@@ -69,6 +72,26 @@ export function adminRoutes(r) {
     if (!user) return deny(c, 404);
     const ok = await setInternalStatus(c.db, c.user.id, user.id, field(c, 'status'));
     await c.session.flash(ok ? 'ok' : 'error', ok ? '저장되었습니다.' : '변경할 수 없는 상태입니다.');
+    return redirect(c, `/admin/participants/${user.id}`);
+  });
+
+  // PIN 초기화: 기관이 본인 확인 후 실행. 임시 PIN은 이 화면에서 한 번만 보여 준다.
+  r.post('/admin/participants/:id/pin-reset', manager, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    const pin = temporaryPin();
+    await resetPin(c.db, c.user.id, user.id, await hashPin(c.cfg.sessionSecret, pin));
+    await clearPhoneFailures(c.db, user.phone);
+    await c.session.flash('ok', `임시 PIN: ${pin} — 본인에게 전달해 주세요. 첫 로그인 때 새 PIN으로 바꾸게 됩니다.`);
+    return redirect(c, `/admin/participants/${user.id}`);
+  });
+
+  r.post('/admin/participants/:id/confirm-phone', manager, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    await confirmPhone(c.db, c.user.id, user.id);
+    if (c.como.configured && user.is_selected) await checkLink(c.db, c.como, await getUser(c.db, user.id), c.user.id);
+    await c.session.flash('ok', '연락처 확인을 기록했습니다.');
     return redirect(c, `/admin/participants/${user.id}`);
   });
 

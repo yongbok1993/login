@@ -83,7 +83,8 @@ export function participantPage(ctx, { user, registration, consents, enrollments
     <h1 class="page-title">${user.name}</h1>
     <div class="card">
       <dl class="summary">
-        <dt>연락처</dt><dd>${formatPhone(user.phone)}</dd>
+        <dt>연락처</dt><dd>${formatPhone(user.phone)}
+          ${user.phone_confirmed_at ? html`<span class="chip">확인 ${formatDateTime(user.phone_confirmed_at)}</span>` : html`<span class="chip warn">미확인</span>`}</dd>
         <dt>생년월일</dt><dd>${formatDate(user.birth_date)}</dd>
         <dt>주소</dt><dd>${user.address}</dd>
         <dt>등록일</dt><dd>${formatDateTime(registration.registered_at)}</dd>
@@ -101,6 +102,15 @@ export function participantPage(ctx, { user, registration, consents, enrollments
               </select>
               <button type="submit" class="btn small ghost">상태 저장</button>
             </form>`}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">계정</h2>
+      <p class="small muted">연락처 확인: 본인·번호를 확인한 경우 기록합니다(선정 시 자동 기록). 꼬모 연동은 확인된 번호만 사용합니다.</p>
+      <div class="actions">
+        ${user.phone_confirmed_at ? '' : postButton(ctx, `/admin/participants/${user.id}/confirm-phone`, '연락처 확인', { cls: 'btn small ghost' })}
+        ${postButton(ctx, `/admin/participants/${user.id}/pin-reset`, 'PIN 초기화', { cls: 'btn small ghost' })}
       </div>
     </div>
 

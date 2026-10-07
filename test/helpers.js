@@ -1,6 +1,7 @@
 import { createApp } from '../src/app.js';
 import { createUnconfiguredAdapter } from '../src/como/adapters.js';
 import { loadConfig } from '../src/config.js';
+import { hashPin } from '../src/lib/pin.js';
 import { nowIso } from '../src/lib/time.js';
 import { createSession, getProgramByCode } from '../src/services/programs.js';
 import { registerUser, setSelected } from '../src/services/users.js';
@@ -9,30 +10,28 @@ import { createD1, migrationStatements } from './d1-shim.js';
 
 const quiet = { info() {}, warn() {}, error(e) { console.error(e); } };
 
+export const TEST_PIN = '258147';
+const TEST_SECRET = loadConfig({ APP_ENV: 'test' }).sessionSecret;
+export const testPinHash = () => hashPin(TEST_SECRET, TEST_PIN);
+
 export const CONSENT = { version: 'test-v1', isDraft: false, items: [{ key: 'privacy', title: '개인정보 수집·이용 동의', required: true, body: '' }] };
 
 export async function startApp({ como, cfg: overrides = {} } = {}) {
   const cfg = loadConfig({ APP_ENV: 'test' }, { consent: CONSENT, ...overrides });
   const { db, dispose } = await openTestDb();
-  const sent = [];
-  const sms = {
-    kind: 'test', configured: true, devVisible: false,
-    async send(phone, message) { sent.push({ phone, message }); return { ok: true }; },
-  };
   const adapter = como || createUnconfiguredAdapter();
-  const app = createApp({ resolveDeps: () => ({ cfg, db, sms, como: adapter, logger: quiet }) });
+  const app = createApp({ resolveDeps: () => ({ cfg, db, como: adapter, logger: quiet }) });
   return {
-    db, cfg, sent, como: adapter, app,
+    db, cfg, como: adapter, app,
     sql: { get: (q, ...p) => get(db, q, ...p), all: (q, ...p) => all(db, q, ...p), run: (q, ...p) => run(db, q, ...p) },
-    client: () => new Client(app, sent),
+    client: () => new Client(app),
     close: dispose,
   };
 }
 
 export class Client {
-  constructor(app, sent) {
+  constructor(app) {
     this.app = app;
-    this.sent = sent;
     this.cookies = new Map();
     this.csrf = null;
   }
@@ -69,27 +68,21 @@ export class Client {
     return this.request('POST', path, csrf ? { _csrf: this.csrf, ...form } : form);
   }
 
-  lastCode(phone) {
-    const m = [...this.sent].reverse().find((s) => s.phone === phone);
-    return m && m.message.match(/(\d{6})/)[1];
-  }
-
-  /** 전화번호 인증 로그인 */
-  async login(phone) {
+  /** 휴대전화 번호 + PIN 로그인 */
+  async login(phone, pin = TEST_PIN) {
     await this.get('/login');
-    const r1 = await this.post('/login', { phone });
-    if (r1.status !== 303) throw new Error(`login send failed: ${r1.status}`);
-    await this.get('/verify');
-    const r = await this.post('/verify', { code: this.lastCode(phone) });
+    const r = await this.post('/login', { phone, pin });
+    if (r.status !== 303) throw new Error(`login failed: ${r.status}`);
     // 로그인 시 세션이 새로 발급되므로 CSRF 토큰을 다시 읽는다.
-    if (r.location) await this.get(r.location);
+    await this.get(r.location);
     return r;
   }
 }
 
 export function addParticipant(db, { name = '참여자', phone, selected = false }) {
-  return registerUser(db, { name, phone, address: '주소', birthDate: '1970-01-01', consent: CONSENT, agreedKeys: ['privacy'] })
-    .then(async (id) => {
+  return testPinHash().then((pinHash) => registerUser(db, {
+    name, phone, address: '주소', birthDate: '1970-01-01', pinHash, consent: CONSENT, agreedKeys: ['privacy'],
+  })).then(async (id) => {
       if (selected) await setSelected(db, null, id, true);
       return id;
     });
@@ -97,8 +90,8 @@ export function addParticipant(db, { name = '참여자', phone, selected = false
 
 export async function addManager(db, phone = '01099990000', role = 'manager') {
   const now = nowIso();
-  return (await run(db, `INSERT INTO users (name, phone, phone_verified_at, role, created_at, updated_at)
-    VALUES ('관리자', ?, ?, ?, ?, ?)`, phone, now, role, now, now)).last_row_id;
+  return (await run(db, `INSERT INTO users (name, phone, phone_verified_at, role, pin_hash, created_at, updated_at)
+    VALUES ('관리자', ?, ?, ?, ?, ?, ?)`, phone, now, role, await testPinHash(), now, now)).last_row_id;
 }
 
 /**
