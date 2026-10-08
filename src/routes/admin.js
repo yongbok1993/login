@@ -29,7 +29,9 @@ export function adminRoutes(r) {
   r.get('/admin/setup', requireLogin, setupOpen, (c) => render(c, views.setupPage, {}));
   r.post('/admin/setup', requireLogin, setupOpen, async (c) => {
     if (await loginBlock(c.db, { phone: c.user.phone })) return render(c, views.setupPage, { error: '시도가 많아 잠시 잠겼습니다.' }, 429);
-    const ok = safeEqual(field(c, 'secret'), c.cfg.sessionSecret);
+    // Cloudflare Pages에 설정한 SESSION_SECRET(32자 이상) 원문과 비교한다. 설정하지 않았으면 지정할 수 없다.
+    const envSecret = c.cfg.envSecret || '';
+    const ok = envSecret.length >= 32 && safeEqual(field(c, 'secret'), envSecret);
     await recordAttempt(c.db, { kind: 'pin', phone: c.user.phone, ip: c.ip, success: ok });
     if (!ok) return render(c, views.setupPage, { error: '값이 맞지 않습니다.' }, 422);
     await setRole(c.db, c.user.id, c.user.id, 'manager');

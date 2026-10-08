@@ -1,5 +1,6 @@
 import { createComoAdapter } from './como/adapters.js';
 import { ensureMigrated } from './db/migrate.js';
+import { appSecret } from './services/settings.js';
 import { loadConfig } from './config.js';
 import { Router } from './lib/router.js';
 import { purgeExpired, Session } from './lib/session.js';
@@ -92,6 +93,8 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
       if (!deps.db) return plainError(500, '설정 오류: D1 데이터베이스 바인딩(DB)이 없습니다.');
       try {
         await ensureMigrated(deps.db);
+        // 세션·PIN 해시 키는 DB에 보관된 값을 쓴다(없으면 처음 한 번 만든다). src/services/settings.js
+        deps = { ...deps, cfg: { ...deps.cfg, envSecret: deps.cfg.sessionSecret, sessionSecret: await appSecret(deps.db, deps.cfg.sessionSecret) } };
       } catch (err) {
         deps.logger.error(err);
         return plainError(500, '데이터베이스 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
@@ -119,11 +122,11 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
           if (len > MAX_BODY) return withHeaders(plainError(413, '요청이 너무 큽니다.'), deps.cfg);
           c.body = await parseBody(request);
         }
+        const match = router.match(c.method, c.path);
+        let response = null;
         await c.session.load();
         if (c.session.userId) c.user = await getUser(c.db, c.session.userId);
 
-        const match = router.match(c.method, c.path);
-        let response = null;
         if (c.method === 'POST' && !c.session.checkCsrf(typeof c.body._csrf === 'string' ? c.body._csrf : '')) {
           response = await deny(c, 403, '요청이 만료되었습니다. 페이지를 새로 열어 다시 시도해 주세요.');
         } else if (c.user && c.user.pin_must_change && !['/account/pin', '/logout'].includes(c.path)) {

@@ -2,8 +2,8 @@ import { hmac, numericCode, safeEqual } from './crypto.js';
 
 // PIN 6자리. 저장 형식: h1$<salt>$<HMAC-SHA256(secret, "pin:v1:" + salt + ":" + pin)>
 // 6자리 PIN은 경우의 수가 적어 느린 해시로도 오프라인 대입을 막기 어렵다.
-// 대신 DB 밖의 비밀키(SESSION_SECRET)로 HMAC해, DB만 유출되면 대입할 수 없게 한다.
-// SESSION_SECRET을 바꾸면 모든 PIN을 재설정해야 한다.
+// 대신 앱 비밀키로 HMAC한다(src/services/settings.js: 처음 실행 때 만들어 DB에 보관).
+// 비밀키를 바꾸면 모든 PIN을 재설정해야 한다.
 
 export const PIN_LENGTH = 6;
 

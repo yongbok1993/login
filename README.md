@@ -48,7 +48,7 @@ test/                    자동 테스트
 5. **Settings → Variables and Secrets** (Production)
    | 이름 | 종류 | 값 |
    |---|---|---|
-   | `SESSION_SECRET` | Secret | 32자 이상 무작위 문자열 (예: `openssl rand -base64 48`) |
+   | `SESSION_SECRET` | Secret | 선택. 첫 관리자 지정(`/admin/setup`)에만 필요. 32자 이상 무작위 문자열 (예: `openssl rand -base64 48`) |
    | `CONSENT_JSON` | Text | 선택. 기본 동의문(`src/content/consent.js`) 대신 쓸 문안 JSON (`content/consent.example.json` 형식) |
    | `COMO_APPLY_URL` | Text | 선택. 기본 `https://cco-mho.pages.dev/` |
 6. **재배포**(Deployments → Retry deployment). 바인딩·변수는 재배포 후 적용된다.
@@ -57,7 +57,7 @@ test/                    자동 테스트
 ### 로그인 방식: 휴대전화 번호 + PIN 6자리
 
 - 참여 등록 때 연락처·이름·주소·생년월일·PIN을 한 번에 입력한다. 문자 인증은 쓰지 않는다.
-- PIN은 `SESSION_SECRET`으로 HMAC한 값(솔트 포함)만 저장한다. **`SESSION_SECRET`을 바꾸면 모든 PIN을 재설정해야 한다.**
+- PIN은 앱 비밀키로 HMAC한 값(솔트 포함)만 저장한다. 앱 비밀키는 처음 실행될 때 만들어 DB(`app_settings.app_secret`)에 보관한다(`SESSION_SECRET`이 32자 이상이면 그 값을 처음 한 번 사용). 이후 `SESSION_SECRET`을 바꾸거나 지워도 PIN은 그대로 유효하다.
 - 같은 숫자 반복·연속 숫자·생년월일·전화번호 뒷자리는 PIN으로 쓸 수 없다.
 - 번호별 30분 내 5회 실패 시 잠금, IP별 1시간 내 30회 실패 시 차단. 실패 문구는 등록 여부와 무관하게 같다.
 - **PIN 분실**: 관리자 → 참여자 상세 → `PIN 초기화` → 화면에 한 번 표시되는 임시 PIN을 본인 확인 후 전달 → 첫 로그인 때 새 PIN 설정(그 전에는 다른 화면 이용 불가).
@@ -90,14 +90,14 @@ test/                    자동 테스트
 - 관리자 `공지` 메뉴에서 작성·수정·삭제. 공지마다 공개 범위를 고른다: `전체 공개`(홈 메뉴 `공지`) 또는 `선정 참여자만`(로그인한 선정 참여자). 고정 공지는 목록 맨 위.
 - 선정 참여자의 나의 현황에 최근 공지 3건이 보인다.
 
-`APP_ENV`를 지정하지 않으면 운영 모드다. 운영 모드에서 `SESSION_SECRET`이 없거나 `DB` 바인딩이 없으면 화면에 설정 오류 문구가 표시된다.
+`APP_ENV`를 지정하지 않으면 운영 모드다. `SESSION_SECRET` 없이도 모든 화면이 동작한다(첫 관리자 지정만 `SESSION_SECRET`이 필요). `DB` 바인딩이 없으면 모든 화면에 설정 오류 문구가 표시된다.
 
 ### 환경 변수
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `APP_ENV` | `production` | `development`는 로컬 전용(개발 표시) |
-| `SESSION_SECRET` | (운영 필수) | 세션·PIN 해시 키. 바꾸면 모든 PIN 재설정 필요 |
+| `SESSION_SECRET` | (없음) | 첫 관리자 지정 확인 값. 32자 이상이면 앱 비밀키 초깃값으로도 쓰임(이후 변경해도 PIN 유지) |
 | `COMO_ADAPTER` | `none` | `mock`은 개발 전용, 운영에서 사용 불가 |
 | `COMO_MOCK_JSON` | - | 개발용 꼬모 모의 데이터 |
 | `COMO_APPLY_URL` | `https://cco-mho.pages.dev/` | 상담신청하기 이동 주소 |

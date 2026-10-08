@@ -60,7 +60,8 @@ export function homePage(ctx, groups) {
 }
 
 export function errorPage(ctx, status, message) {
-  const titles = { 403: '접근 권한이 없습니다', 404: '페이지를 찾을 수 없습니다', 500: '오류가 발생했습니다' };
+  const titles = { 403: '접근 권한이 없습니다', 404: '페이지를 찾을 수 없습니다', 500: '오류가 발생했습니다',
+    503: '잠시 이용할 수 없습니다' };
   const title = titles[status] || '요청을 처리할 수 없습니다';
   const body = html`<section class="sec narrow"><div class="wrap">
     <h1 class="page-title">${title}</h1>

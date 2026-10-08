@@ -74,5 +74,11 @@ export const MIGRATIONS = [
     "statements": [
       "UPDATE programs SET schedule_label = '2~11월 · 사업 운영 10회', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\nWHERE code = 'open-counseling' AND schedule_label = '2~11월 · 사업 운영 20회'"
     ]
+  },
+  {
+    "name": "0008_app_settings.sql",
+    "statements": [
+      "CREATE TABLE app_settings (\n  key        TEXT PRIMARY KEY,\n  value      TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)"
+    ]
   }
 ];
