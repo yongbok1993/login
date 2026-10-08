@@ -68,5 +68,11 @@ export const MIGRATIONS = [
       "CREATE TABLE notices (\n  id         INTEGER PRIMARY KEY,\n  title      TEXT    NOT NULL,\n  body       TEXT    NOT NULL DEFAULT '',\n  audience   TEXT    NOT NULL CHECK (audience IN ('public', 'participants')),\n  is_pinned  INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),\n  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,\n  created_at TEXT    NOT NULL,\n  updated_at TEXT    NOT NULL\n)",
       "CREATE INDEX notices_audience ON notices(audience, created_at)"
     ]
+  },
+  {
+    "name": "0007_counseling_count.sql",
+    "statements": [
+      "UPDATE programs SET schedule_label = '2~11월 · 사업 운영 10회', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\nWHERE code = 'open-counseling' AND schedule_label = '2~11월 · 사업 운영 20회'"
+    ]
   }
 ];

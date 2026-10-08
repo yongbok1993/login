@@ -26,7 +26,7 @@ test('1:1 매칭이면 연결하고 개인 배정 회차로 표시(모의 데이
   assert.equal(link.phone_at_link, '01070000001');
 });
 
-test('총회차가 없거나 0이면 진행률 계산 안 함, 사업 운영 20회로 대체하지 않음', async (t) => {
+test('총회차가 없거나 0이면 진행률 계산 안 함, 사업 운영 횟수로 대체하지 않음', async (t) => {
   const como = mock([
     { externalId: 'n1', phone: '01070000002', completed: 2, total: null },
     { externalId: 'z1', phone: '01070000003', completed: 0, total: 0 },
@@ -39,7 +39,7 @@ test('총회차가 없거나 0이면 진행률 계산 안 함, 사업 운영 20�
   let r = await c.get('/me/open/counseling');
   assert.match(r.text, /2회 완료/);
   assert.ok(!r.text.includes('<progress'));
-  assert.ok(!r.text.includes('/ 20회'));
+  assert.ok(!r.text.includes('/ 10회') && !r.text.includes('/ 20회'));
   const c2 = app.client();
   await c2.login('01070000003');
   r = await c2.get('/me/open/counseling');
