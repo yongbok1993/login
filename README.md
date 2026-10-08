@@ -11,7 +11,7 @@ public/                  Pages 정적 출력 디렉터리 (build output director
   _routes.json           /static/* 은 정적 파일, 나머지는 Functions
 functions/
   [[path]].js            Pages Functions 진입점(모든 경로) → src/app.js
-migrations/              D1 스키마(0001)·프로그램(0002)·주소/생년월일(0003)·PIN 로그인(0004)·상세 주소(0005)·Grow 선정/공지(0006)
+migrations/              D1 스키마(0001)·프로그램(0002)·주소/생년월일(0003)·PIN 로그인(0004)·상세 주소(0005)·Grow 선정/공지(0006)·상담 운영 10회(0007)
 .github/workflows/ci.yml  PR·main 테스트
 src/
   app.js                 요청 처리(라우팅·세션·CSRF·보안 헤더)

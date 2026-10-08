@@ -40,3 +40,21 @@ test('자동 마이그레이션: 운영처럼 0003까지 적용된 DB에는 나�
   const cols = (await db.prepare("SELECT name FROM pragma_table_info('users')").all()).results.map((x) => x.name);
   assert.ok(cols.includes('pin_hash') && cols.includes('address') && cols.includes('address_detail') && !cols.includes('region'));
 });
+
+test('0007: 기본값일 때만 전문 심리상담 운영 횟수를 10회로 바꾸고, 관리자가 고친 값은 유지', async (t) => {
+  const { db, dispose } = await openTestDb();
+  t.after(dispose);
+  const upTo6 = MIGRATIONS.filter((m) => m.name < '0007');
+  await ensureMigrated(db, upTo6);
+  const label = async () => (await db.prepare("SELECT schedule_label FROM programs WHERE code = 'open-counseling'").first()).schedule_label;
+  assert.equal(await label(), '2~11월 · 사업 운영 20회');
+  await ensureMigrated({ prepare: (q) => db.prepare(q), batch: (q) => db.batch(q) });
+  assert.equal(await label(), '2~11월 · 사업 운영 10회');
+
+  const other = await openTestDb();
+  t.after(other.dispose);
+  await ensureMigrated(other.db, upTo6);
+  await other.db.prepare("UPDATE programs SET schedule_label = '관리자 수정' WHERE code = 'open-counseling'").run();
+  await ensureMigrated({ prepare: (q) => other.db.prepare(q), batch: (q) => other.db.batch(q) });
+  assert.equal((await other.db.prepare("SELECT schedule_label FROM programs WHERE code = 'open-counseling'").first()).schedule_label, '관리자 수정');
+});

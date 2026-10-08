@@ -19,6 +19,8 @@ test('공개 홈: L/O/G 목록, 꼬모·상담 버튼·참여 절차·시안 설
     assert.ok(r.text.includes(name), name);
   }
   assert.ok(r.text.includes('참여 등록'));
+  assert.ok(r.text.includes('2~11월 · 사업 운영 10회'), '전문 심리상담 운영 계획 10회');
+  assert.ok(!r.text.includes('사업 운영 20회'));
   for (const bad of ['cco-mho', '상담신청하기', '참여 절차', '선정 시 전체 자동 참여', '지역사회 네트워크', '통합사례회의',
     '인식개선 캠페인', '디자인 기준', '로그인 화면 예시', '절기문화활동', '원예', '나의 강점 찾기',
     '<img', 'cloudflareinsights', ...BANNED]) {
