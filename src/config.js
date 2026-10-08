@@ -11,7 +11,8 @@ export function loadConfig(env = {}, overrides = {}) {
   const cfg = {
     env: appEnv,
     isProd,
-    // 세션·PIN 해시 키. 바꾸면 모든 로그인이 끊기고 모든 PIN을 재설정해야 한다.
+    // 세션·PIN 해시 키의 초깃값(선택). 앱은 처음 실행될 때 이 값(32자 이상일 때) 또는 무작위 값을 DB에 저장하고,
+    // 이후에는 DB 값을 쓴다(src/services/settings.js). 운영에서 따로 설정하지 않아도 된다.
     sessionSecret: env.SESSION_SECRET || (isProd ? '' : 'dev-only-secret-change-me-000000000000'),
     sessionIdleDays: Number(env.SESSION_IDLE_DAYS || 14),
     sessionMaxDays: Number(env.SESSION_MAX_DAYS || 60),
@@ -31,8 +32,6 @@ export function loadConfig(env = {}, overrides = {}) {
 
 export function validateConfig(cfg) {
   if (!['production', 'development', 'test'].includes(cfg.env)) throw new Error(`지원하지 않는 APP_ENV: ${cfg.env}`);
-  // SESSION_SECRET이 없거나 짧으면 사이트 전체를 멈추지 않고, 로그인이 필요 없는 공개 화면만 보여 준다(app.js).
-  cfg.secretMissing = !cfg.sessionSecret || cfg.sessionSecret.length < 32;
   if (cfg.isProd) {
     if (cfg.comoAdapter === 'mock') throw new Error('운영 환경에서는 COMO_ADAPTER=mock을 사용할 수 없습니다.');
   }

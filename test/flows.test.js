@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { autoAssignLink } from '../src/services/enrollments.js';
-import { addManager, addParticipant, addSession, startApp, TEST_PIN } from './helpers.js';
+import { addManager, addParticipant, addSession, openTestDb, startApp, TEST_PIN } from './helpers.js';
 
 const BANNED = [
   '온라인에서 이야기가 시작되고', '사람과 사람의 관계에 로그인합니다', '등록은 한 번이면 충분합니다', '그다음은 로그인만',
@@ -502,33 +502,49 @@ test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async 
   assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '2026-10-07');
 });
 
-test('SESSION_SECRET 없음·짧음: 공개 화면은 열리고(세션 없음), 로그인·등록·관리자는 503, healthz가 원인을 알려 줌', async (t) => {
+test('SESSION_SECRET 없음·짧음: 비밀키를 DB에 자동 생성해 등록·로그인 동작, 이후 요청도 같은 키 사용', async (t) => {
   const { createApp } = await import('../src/app.js');
   const { createD1 } = await import('./d1-shim.js');
-  const app = createApp();
   for (const secret of [undefined, 'too-short']) {
+    const app = createApp();
     const db = createD1();
     t.after(() => db.sqlite.close());
     const env = { DB: db, ...(secret ? { SESSION_SECRET: secret } : {}) };
-    const get = (path, init) => app.fetch(new Request(`https://login-cpn.pages.dev${path}`, init), env, {});
-    let r = await get('/');
-    assert.equal(r.status, 200);
-    assert.match(await r.text(), /요리교실/);
-    assert.equal(r.headers.get('set-cookie'), null);
-    r = await get('/notices');
-    assert.equal(r.status, 200);
-    r = await get('/healthz');
-    assert.match(await r.text(), /SESSION_SECRET/);
-    for (const path of ['/login', '/register', '/me', '/admin', '/admin/setup']) {
-      r = await get(path);
-      assert.equal(r.status, 503, path);
-      assert.match(await r.text(), /로그인과 참여 등록을 이용할 수 없습니다/);
-      assert.equal(r.headers.get('set-cookie'), null, `${path}: 세션을 만들지 않음`);
-    }
-    r = await get('/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'phone=01012345678&pin=258147' });
-    assert.equal(r.status, 503);
-    assert.equal((await db.prepare('SELECT COUNT(*) n FROM auth_sessions').first()).n, 0);
+    const fetchPage = (path, init) => app.fetch(new Request(`https://login-cpn.pages.dev${path}`, init), env, {});
+    const post = async (path, form) => {
+      let r = await fetchPage(path);
+      const cookie = r.headers.get('set-cookie').split(';')[0];
+      const csrf = (await r.text()).match(/name="_csrf" value="([^"]+)"/)[1];
+      r = await fetchPage(path, { method: 'POST', headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ _csrf: csrf, ...form }).toString() });
+      return r;
+    };
+    assert.equal((await fetchPage('/healthz')).status, 200);
+    let r = await post('/register', REG);
+    assert.equal(r.status, 303, '등록 동작');
+    assert.equal(r.headers.get('location'), '/me');
+    const stored = (await db.prepare("SELECT value FROM app_settings WHERE key = 'app_secret'").first()).value;
+    assert.ok(stored.length >= 32 && stored !== secret);
+    // 새 인스턴스(재배포·다른 서버)에서도 같은 DB 키로 로그인된다.
+    const app2 = createApp();
+    const r2 = await app2.fetch(new Request('https://login-cpn.pages.dev/login'), env, {});
+    const cookie = r2.headers.get('set-cookie').split(';')[0];
+    const csrf = (await r2.text()).match(/name="_csrf" value="([^"]+)"/)[1];
+    r = await app2.fetch(new Request('https://login-cpn.pages.dev/login', { method: 'POST',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ _csrf: csrf, phone: REG.phone, pin: REG.pin }).toString() }), env, {});
+    assert.equal(r.headers.get('location'), '/me', '로그인 동작');
   }
+});
+
+test('SESSION_SECRET이 32자 이상이면 그 값을 비밀키로 저장, 나중에 바뀌어도 저장된 키 유지', async (t) => {
+  const { appSecret } = await import('../src/services/settings.js');
+  const { db, dispose } = await openTestDb();
+  t.after(dispose);
+  const { ensureMigrated } = await import('../src/db/migrate.js');
+  await ensureMigrated(db);
+  assert.equal(await appSecret(db, 'a'.repeat(40)), 'a'.repeat(40));
+  assert.equal((await db.prepare("SELECT value FROM app_settings WHERE key = 'app_secret'").first()).value, 'a'.repeat(40));
 });
 
 test('운영 모드 설정 오류: DB 바인딩 누락을 알려 준다', async () => {
