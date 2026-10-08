@@ -31,8 +31,9 @@ export function loadConfig(env = {}, overrides = {}) {
 
 export function validateConfig(cfg) {
   if (!['production', 'development', 'test'].includes(cfg.env)) throw new Error(`지원하지 않는 APP_ENV: ${cfg.env}`);
+  // SESSION_SECRET이 없거나 짧으면 사이트 전체를 멈추지 않고, 로그인이 필요 없는 공개 화면만 보여 준다(app.js).
+  cfg.secretMissing = !cfg.sessionSecret || cfg.sessionSecret.length < 32;
   if (cfg.isProd) {
-    if (!cfg.sessionSecret || cfg.sessionSecret.length < 32) throw new Error('SESSION_SECRET(32자 이상)가 필요합니다.');
     if (cfg.comoAdapter === 'mock') throw new Error('운영 환경에서는 COMO_ADAPTER=mock을 사용할 수 없습니다.');
   }
   if (!['none', 'mock'].includes(cfg.comoAdapter)) throw new Error(`지원하지 않는 COMO_ADAPTER: ${cfg.comoAdapter}`);

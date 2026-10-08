@@ -502,14 +502,39 @@ test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async 
   assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '2026-10-07');
 });
 
-test('운영 모드 설정 오류: SESSION_SECRET·DB 바인딩 누락을 알려 준다', async () => {
+test('SESSION_SECRET 없음·짧음: 공개 화면은 열리고(세션 없음), 로그인·등록·관리자는 503, healthz가 원인을 알려 줌', async (t) => {
   const { createApp } = await import('../src/app.js');
   const { createD1 } = await import('./d1-shim.js');
   const app = createApp();
-  let r = await app.fetch(new Request('https://login-cpn.pages.dev/'), { DB: createD1() }, {});
-  assert.equal(r.status, 500);
-  assert.match(await r.text(), /SESSION_SECRET/);
-  r = await app.fetch(new Request('https://login-cpn.pages.dev/'), { SESSION_SECRET: 'x'.repeat(40) }, {});
+  for (const secret of [undefined, 'too-short']) {
+    const db = createD1();
+    t.after(() => db.sqlite.close());
+    const env = { DB: db, ...(secret ? { SESSION_SECRET: secret } : {}) };
+    const get = (path, init) => app.fetch(new Request(`https://login-cpn.pages.dev${path}`, init), env, {});
+    let r = await get('/');
+    assert.equal(r.status, 200);
+    assert.match(await r.text(), /요리교실/);
+    assert.equal(r.headers.get('set-cookie'), null);
+    r = await get('/notices');
+    assert.equal(r.status, 200);
+    r = await get('/healthz');
+    assert.match(await r.text(), /SESSION_SECRET/);
+    for (const path of ['/login', '/register', '/me', '/admin', '/admin/setup']) {
+      r = await get(path);
+      assert.equal(r.status, 503, path);
+      assert.match(await r.text(), /로그인과 참여 등록을 이용할 수 없습니다/);
+      assert.equal(r.headers.get('set-cookie'), null, `${path}: 세션을 만들지 않음`);
+    }
+    r = await get('/login', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: 'phone=01012345678&pin=258147' });
+    assert.equal(r.status, 503);
+    assert.equal((await db.prepare('SELECT COUNT(*) n FROM auth_sessions').first()).n, 0);
+  }
+});
+
+test('운영 모드 설정 오류: DB 바인딩 누락을 알려 준다', async () => {
+  const { createApp } = await import('../src/app.js');
+  const app = createApp();
+  const r = await app.fetch(new Request('https://login-cpn.pages.dev/'), { SESSION_SECRET: 'x'.repeat(40) }, {});
   assert.equal(r.status, 500);
   assert.match(await r.text(), /D1 데이터베이스 바인딩\(DB\)/);
 });

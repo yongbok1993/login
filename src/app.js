@@ -10,9 +10,12 @@ import { meRoutes } from './routes/me.js';
 import { noticeRoutes } from './routes/notices.js';
 import { groupByTheme, listPrograms } from './services/programs.js';
 import { getUser } from './services/users.js';
-import { homePage } from './views/public.js';
+import { errorPage, homePage } from './views/public.js';
 
 const MAX_BODY = 20 * 1024;
+
+// SESSION_SECRET이 설정되지 않았을 때도 열어 두는 공개 화면(로그인·PIN과 무관, 세션을 만들지 않음)
+const OPEN_WITHOUT_SECRET = [/^\/$/, /^\/notices$/, /^\/notices\/\d+$/];
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy': [
@@ -42,7 +45,8 @@ export function depsFromEnv(env) {
 
 function buildRouter() {
   const r = new Router();
-  r.get('/healthz', (c) => respond(c, 'ok', { type: 'text/plain; charset=utf-8' }));
+  r.get('/healthz', (c) => respond(c, c.cfg.secretMissing ? 'ok (설정 확인 필요: SESSION_SECRET 없음 또는 32자 미만 — 공개 화면만 동작)' : 'ok',
+    { type: 'text/plain; charset=utf-8' }));
   r.get('/', async (c) => render(c, homePage, groupByTheme(await listPrograms(c.db, { publicOnly: true })), 200, { session: !!c.user }));
   authRoutes(r);
   noticeRoutes(r);
@@ -119,11 +123,22 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
           if (len > MAX_BODY) return withHeaders(plainError(413, '요청이 너무 큽니다.'), deps.cfg);
           c.body = await parseBody(request);
         }
-        await c.session.load();
-        if (c.session.userId) c.user = await getUser(c.db, c.session.userId);
-
         const match = router.match(c.method, c.path);
         let response = null;
+        const readOnly = c.method === 'GET' || c.method === 'HEAD';
+        if (deps.cfg.secretMissing) {
+          // 로그인·등록·PIN은 SESSION_SECRET이 있어야 안전하게 동작하므로 막고, 공개 화면만 세션 없이 보여 준다.
+          deps.logger.error('SESSION_SECRET이 없거나 32자 미만입니다. 공개 화면만 제공합니다.');
+          if (!(readOnly && (c.path === '/healthz' || OPEN_WITHOUT_SECRET.some((re) => re.test(c.path))))) {
+            response = await render(c, (ctx) => errorPage(ctx, 503, '지금은 로그인과 참여 등록을 이용할 수 없습니다. 잠시 후 다시 시도하거나 기관에 문의해 주세요.'),
+              undefined, 503, { session: false });
+            return withHeaders(response, deps.cfg, null);
+          }
+        } else {
+          await c.session.load();
+          if (c.session.userId) c.user = await getUser(c.db, c.session.userId);
+        }
+
         if (c.method === 'POST' && !c.session.checkCsrf(typeof c.body._csrf === 'string' ? c.body._csrf : '')) {
           response = await deny(c, 403, '요청이 만료되었습니다. 페이지를 새로 열어 다시 시도해 주세요.');
         } else if (c.user && c.user.pin_must_change && !['/account/pin', '/logout'].includes(c.path)) {
