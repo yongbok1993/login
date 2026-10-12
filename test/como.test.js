@@ -116,7 +116,7 @@ test('전화번호 변경 시 연결 해제·현황 삭제, 새 번호는 관리
   // 관리자가 연락처를 확인하면 그때 매핑한다.
   await addManager(app.db);
   const m = app.client();
-  await m.login('01099990000');
+  await m.adminLogin();
   await m.post(`/admin/participants/${uid}/confirm-phone`);
   assert.equal((await app.sql.get('SELECT status FROM como_links')).status, 'linked');
   assert.match((await c.get('/me')).text, /9 \/ 9회 완료/);
@@ -176,7 +176,7 @@ test('관리자: 충돌 건을 후보 중 하나로 확정 연결, 미설정 시
   const uid = await addParticipant(app.db, { phone: '01076000001', selected: true });
   await addManager(app.db);
   const m = app.client();
-  await m.login('01099990000');
+  await m.adminLogin();
   await m.post('/admin/como/check-all');
   assert.equal((await app.sql.get('SELECT status FROM como_links')).status, 'conflict');
   let r = await m.post(`/admin/como/${uid}/confirm`, { external_id: 'not-a-candidate' });
@@ -191,7 +191,7 @@ test('관리자: 충돌 건을 후보 중 하나로 확정 연결, 미설정 시
   t.after(plain.close);
   await addManager(plain.db);
   const m2 = plain.client();
-  await m2.login('01099990000');
+  await m2.adminLogin();
   r = await m2.get('/admin/como');
   assert.match(r.text, /미연결 \(연동 인터페이스 미확인\)/);
   assert.equal((await m2.post('/admin/como/check-all')).status, 409);

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { get } from '../src/lib/db.js';
 import { applyLocalMigrations, openLocalDb, pagesDevArgs, ROOT } from './local-d1.js';
-import { DEV_PIN, MOCK_COMO, seed } from './seed-dev.js';
+import { DEV_ADMIN, DEV_PIN, MOCK_COMO, seed } from './seed-dev.js';
 
 const WIDTHS = [320, 360, 390, 430, 768, 1024, 1280];
 const PORT = 3300 + Math.floor(Math.random() * 500);
@@ -42,6 +42,14 @@ async function login(page, phone) {
   await page.fill('#pin', DEV_PIN);
   await page.click('button[type=submit].btn');
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
+}
+
+async function adminLogin(page) {
+  await page.goto(`${BASE}/admin/login`);
+  await page.fill('#login_id', DEV_ADMIN.loginId);
+  await page.fill('#password', DEV_ADMIN.password);
+  await page.click('button[type=submit].btn');
+  await page.waitForURL((u) => !u.pathname.startsWith('/admin/login'));
 }
 
 async function check(page, url, label) {
@@ -137,7 +145,7 @@ try {
   const blockCdn = (pg) => pg.route('https://t1.daumcdn.net/**', (r) => r.abort());
   const anon = await browser.newPage();
   await blockCdn(anon);
-  for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/register', 'register'], ['/notices', 'notices'], ['/notices/1', 'notice']]) {
+  for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/admin/login', 'admin-login'], ['/register', 'register'], ['/notices', 'notices'], ['/notices/1', 'notice']]) {
     failures += await check(anon, u, l);
   }
   failures += await check(anon, '/account/pin', 'login-redirect');
@@ -153,12 +161,12 @@ try {
   failures += await check(unselected, '/me', 'me-unselected');
 
   const m = await browser.newPage();
-  await login(m, '01000000000');
+  await adminLogin(m);
   for (const [u, l] of [['/admin', 'admin'], ['/admin/participants', 'admin-participants'], ['/admin/participants/2', 'admin-participant'],
     ['/admin/programs', 'admin-programs'], ['/admin/programs/1', 'admin-program'], ['/admin/sessions/1', 'admin-session'],
     ['/admin/programs/new', 'admin-program-new'], ['/admin/link', 'admin-link'], ['/admin/como', 'admin-como'], ['/admin/audit', 'admin-audit'],
     ['/admin/grow', 'admin-grow'], ['/admin/grow?status=all', 'admin-grow-all'], ['/admin/notices', 'admin-notices'],
-    ['/admin/notices/new', 'admin-notice-new'], ['/admin/staff', 'admin-staff'], [`/admin/sessions/${growId}`, 'admin-session-grow']]) {
+    ['/admin/notices/new', 'admin-notice-new'], ['/admin/staff', 'admin-staff'], ['/admin/account', 'admin-account'], [`/admin/sessions/${growId}`, 'admin-session-grow']]) {
     failures += await check(m, u, l);
   }
 } finally {

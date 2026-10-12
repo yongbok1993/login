@@ -227,3 +227,41 @@ export async function setRole(db, actorId, userId, role) {
 export function listStaff(db) {
   return all(db, "SELECT * FROM users WHERE role IN ('staff', 'manager') ORDER BY role DESC, name");
 }
+
+// ── 관리자 아이디·비밀번호 ──
+
+export function isAdminRole(user) {
+  return !!user && (user.role === 'staff' || user.role === 'manager');
+}
+
+export function findAdminByLoginId(db, loginId) {
+  return get(db, "SELECT * FROM users WHERE login_id = ? AND role IN ('staff', 'manager')", loginId);
+}
+
+/** 본인 아이디·비밀번호 설정. 아이디가 이미 쓰이면 false. 다른 로그인 세션은 종료한다. */
+export async function setAdminCredentials(db, userId, { loginId, passwordHash }, keepTokenHash) {
+  const now = nowIso();
+  try {
+    await batch(db, [
+      stmt(db, `UPDATE users SET login_id = ?, password_hash = ?, password_must_change = 0, password_updated_at = ?, updated_at = ?
+        WHERE id = ?`, loginId, passwordHash, now, now, userId),
+      stmt(db, 'DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?', userId, keepTokenHash),
+      auditStmt(db, userId, 'user.password_set', 'user', userId),
+    ]);
+  } catch (err) {
+    if (isUniqueError(err)) return false;
+    throw err;
+  }
+  return true;
+}
+
+/** 전체 관리자가 다른 관리자의 비밀번호를 임시 비밀번호로 초기화: 첫 로그인 때 변경 요구, 로그인 세션 종료 */
+export async function resetAdminPassword(db, actorId, userId, passwordHash) {
+  const now = nowIso();
+  await batch(db, [
+    stmt(db, 'UPDATE users SET password_hash = ?, password_must_change = 1, password_updated_at = ?, updated_at = ? WHERE id = ?',
+      passwordHash, now, now, userId),
+    stmt(db, 'DELETE FROM auth_sessions WHERE user_id = ?', userId),
+    auditStmt(db, actorId, 'user.password_reset', 'user', userId),
+  ]);
+}

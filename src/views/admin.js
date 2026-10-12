@@ -452,12 +452,14 @@ export function noticeFormPage(ctx, { notice, values = {}, errors = {} }) {
 export function staffPage(ctx, list) {
   return page(ctx, '관리자', html`
     <h1 class="page-title">관리자</h1>
-    <p class="small muted">관리자 지정은 참여자 상세 화면에서 합니다. 운영 담당은 프로그램·회차·출석·공지·Grow 선정을, 전체 관리자는 참여자 정보·선정·권한까지 관리합니다.</p>
-    ${table(['이름', '전화번호', '권한', ''], list.map((u) => html`<tr>
+    <p class="small muted">관리자 지정은 참여자 상세 화면에서 합니다. 새 관리자는 처음 한 번 휴대전화 번호·PIN으로 로그인한 뒤 아이디·비밀번호를 만듭니다. 운영 담당은 프로그램·회차·출석·공지·Grow 선정을, 전체 관리자는 참여자 정보·선정·권한까지 관리합니다.</p>
+    ${table(['이름', '아이디', '전화번호', '권한', ''], list.map((u) => html`<tr>
       <td>${u.name}</td>
+      <td>${u.login_id || html`<span class="muted">미설정</span>`}${u.password_must_change ? html` <span class="small muted">(임시 비밀번호)</span>` : ''}</td>
       <td>${formatPhone(u.phone)}</td>
       <td>${ROLES[u.role]}</td>
       <td><div class="row-actions">
+        ${u.login_id && u.id !== ctx.user.id ? postButton(ctx, `/admin/users/${u.id}/password-reset`, '비밀번호 초기화', { cls: 'btn small ghost' }) : ''}
         ${u.role === 'staff' ? postButton(ctx, `/admin/users/${u.id}/role`, '전체 관리자로', { cls: 'btn small ghost', hidden: { role: 'manager', back: 'staff' } }) : ''}
         ${u.role === 'manager' ? postButton(ctx, `/admin/users/${u.id}/role`, '운영 담당으로', { cls: 'btn small ghost', hidden: { role: 'staff', back: 'staff' } }) : ''}
         ${postButton(ctx, `/admin/users/${u.id}/role`, '권한 해제', { cls: 'btn small ghost', hidden: { role: 'participant', back: 'staff' } })}

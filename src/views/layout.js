@@ -33,6 +33,7 @@ function headerNav(ctx, area) {
       ${manager ? navLink(ctx, '/admin/como', '꼬모 연동') : ''}
       ${manager ? navLink(ctx, '/admin/staff', '관리자') : ''}
       ${manager ? navLink(ctx, '/admin/audit', '변경 기록') : ''}
+      ${navLink(ctx, '/admin/account', '내 계정')}
       ${logoutForm(ctx)}`;
   }
   if (!u) {

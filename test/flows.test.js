@@ -193,7 +193,7 @@ test('Grow: 희망 신청(개인정보 재입력 없음) → 관리자 선정 �
 
   await addManager(app.db);
   const m = app.client();
-  await m.login('01099990000');
+  await m.adminLogin();
   r = await m.get('/admin/grow');
   assert.match(r.text, /참여자가/);
   assert.match(r.text, /참여자나/);
@@ -248,7 +248,7 @@ test('공지: 공개 범위별 노출, 관리자 작성·수정·삭제', async 
   await addParticipant(app.db, { phone: '01052000001', selected: true });
   await addParticipant(app.db, { phone: '01052000002' });
   const m = app.client();
-  await m.login('01099990000');
+  await m.adminLogin();
   let r = await m.post('/admin/notices/new', { title: '', audience: 'x' });
   assert.equal(r.status, 422);
   await m.post('/admin/notices/new', { title: '전체 공지 제목', body: '첫 줄\n<script>x</script>', audience: 'public' });
@@ -305,16 +305,33 @@ test('첫 관리자 지정(/admin/setup)·권한 지정: 로그인 없이 SESSIO
   const u = await app.sql.get('SELECT role, pin_must_change FROM users WHERE id = ?', uid);
   assert.equal(u.role, 'manager');
   assert.equal(u.pin_must_change, 0);
-  assert.equal((await c.get('/admin')).status, 200, '바로 관리자 화면');
+  // 관리자는 아이디·비밀번호를 만들 때까지 다른 화면 이용 불가
+  assert.equal((await c.get('/admin')).location, '/admin/account');
+  assert.equal((await c.get('/admin/setup')).location, '/admin/account');
+  r = await c.get('/admin/account');
+  assert.match(r.text, /현재 PIN 6자리/);
+  const acct = { login_id: 'Gwanri01', current: '583920', password: 'safepass2026', password_confirm: 'safepass2026' };
+  r = await c.post('/admin/account', { ...acct, current: '000000' });
+  assert.match(r.text, /PIN이 맞지 않습니다/);
+  r = await c.post('/admin/account', { ...acct, password: 'gwanri01abc', password_confirm: 'gwanri01abc' });
+  assert.match(r.text, /아이디를 포함할 수 없습니다/);
+  r = await c.post('/admin/account', { ...acct, password: 'onlyletters', password_confirm: 'onlyletters' });
+  assert.match(r.text, /영문과 숫자를 함께/);
+  r = await c.post('/admin/account', acct);
+  assert.equal(r.location, '/admin');
+  assert.equal((await app.sql.get('SELECT login_id FROM users WHERE id = ?', uid)).login_id, 'gwanri01', '아이디는 소문자로 저장');
+  assert.equal((await c.get('/admin')).status, 200);
   assert.equal((await c.get('/admin/setup')).status, 404, '관리자가 생기면 닫힘');
   assert.ok(await app.sql.get("SELECT 1 FROM audit_log WHERE action = 'user.setup_manager' AND target_id = ?", uid));
-  // 새 PIN으로 로그인, 이전 PIN은 무효
+  // 이후에는 아이디·비밀번호로만 로그인(PIN 로그인 불가)
   const again = app.client();
-  await again.login('01053000001', '583920');
+  await again.get('/login');
+  assert.equal((await again.post('/login', { phone: '01053000001', pin: '583920' })).status, 422, '관리자는 PIN 로그인 불가');
+  await again.get('/admin/login');
+  assert.equal((await again.post('/admin/login', { login_id: 'gwanri01', password: 'wrongpass99' })).status, 422);
+  await again.adminLogin('GWANRI01', 'safepass2026');
   assert.equal((await again.get('/admin')).status, 200);
-  const old = app.client();
-  await old.get('/login');
-  assert.equal((await old.post('/login', { phone: '01053000001', pin: TEST_PIN })).status, 422);
+  assert.equal((await app.client().get('/admin')).location, '/admin/login', '로그인 안 했으면 관리자 로그인으로');
 
   // 다른 사람이 같은 경로로 관리자가 될 수 없음
   const o = app.client();
@@ -330,9 +347,16 @@ test('첫 관리자 지정(/admin/setup)·권한 지정: 로그인 없이 SESSIO
   // 마지막 전체 관리자는 해제 불가
   r = await c.post(`/admin/users/${uid}/role`, { role: 'participant' });
   assert.equal((await app.sql.get('SELECT role FROM users WHERE id = ?', uid)).role, 'manager');
-  // 운영 담당은 권한 변경 불가
+  // 새 운영 담당: 처음 한 번 번호·PIN으로 로그인해 아이디·비밀번호를 만든다
   const s = app.client();
   await s.login('01053000002');
+  assert.equal((await s.get('/admin/grow')).location, '/admin/account');
+  await s.get('/admin/account');
+  r = await s.post('/admin/account', { login_id: 'gwanri01', current: TEST_PIN, password: 'staffpass77', password_confirm: 'staffpass77' });
+  assert.match(r.text, /이미 사용 중인 아이디입니다/);
+  r = await s.post('/admin/account', { login_id: 'staff02', current: TEST_PIN, password: 'staffpass77', password_confirm: 'staffpass77' });
+  assert.equal(r.location, '/admin');
+  // 운영 담당은 권한 변경 불가
   assert.equal((await s.post(`/admin/users/${uid}/role`, { role: 'participant' })).status, 403);
   assert.equal((await s.get('/admin/grow')).status, 200);
   assert.equal((await s.get('/admin/notices')).status, 200);
@@ -418,7 +442,7 @@ test('다른 사용자의 정보·관리자 화면 접근 불가, 운영 담당�
 
   await addManager(app.db, '01099990001', 'staff');
   const s = app.client();
-  await s.login('01099990001');
+  await s.adminLogin('admin0001');
   assert.equal((await s.get('/admin/participants')).status, 403);
   assert.equal((await s.get('/admin/como')).status, 403);
   const roster = await s.get(`/admin/sessions/${sid}`);
@@ -435,7 +459,7 @@ test('관리자: 선정 → Link 배정, 회차 추가, 출석 기록 → 참여
   const uid = await addParticipant(app.db, { name: '선정대상', phone: '01011110001' });
   await addManager(app.db);
   const m = app.client();
-  await m.login('01099990000');
+  await m.adminLogin();
   let r = await m.get('/admin/participants?status=received');
   assert.match(r.text, /선정대상/);
   r = await m.post(`/admin/participants/${uid}/select`, { selected: '1' });
@@ -479,7 +503,7 @@ test('관리자 배정: internal(통합사례회의) 회차에는 배정 불가'
   const campaign = await addSession(app.db, 'in-campaign', { date: '2099-10-01' });
   await addManager(app.db);
   const m = app.client();
-  await m.login('01099990000');
+  await m.adminLogin();
   await m.post(`/admin/sessions/${sid}/assign`, { user_id: String(uid) });
   assert.equal((await app.sql.get('SELECT COUNT(*) n FROM enrollments WHERE session_id = ?', sid)).n, 0);
   // 캠페인은 실제 배정한 참여자의 일정에만
@@ -530,6 +554,42 @@ test('첫 관리자 지정: 등록되지 않은 번호면 관리자 계정 생�
   p = await n.post('/admin/setup', { ...info, secret: 'abcd-2345-efgh-6789' });
   assert.equal(p.status, 422);
   assert.equal((await none.sql.get("SELECT COUNT(*) n FROM users WHERE role = 'manager'")).n, 0);
+});
+
+test('관리자 비밀번호 초기화: 전체 관리자가 임시 비밀번호 발급 → 첫 로그인 때 변경, 본인은 초기화 불가, 반복 실패 잠금', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const mid = await addManager(app.db);
+  const sid = await addManager(app.db, '01099990002', 'staff');
+  const m = app.client();
+  await m.adminLogin();
+  assert.match((await m.get('/admin/staff')).text, /admin0002/);
+  const s = app.client();
+  await s.adminLogin('admin0002');
+  assert.equal((await m.post(`/admin/users/${mid}/password-reset`)).status, 404, '본인은 초기화 불가');
+  let r = await m.post(`/admin/users/${sid}/password-reset`);
+  assert.equal(r.location, '/admin/staff');
+  const temp = (await m.get('/admin/staff')).text.match(/임시 비밀번호: ([a-z0-9]{12})/)[1];
+  assert.equal((await s.get('/admin')).location, '/admin/login', '초기화하면 기존 로그인 종료');
+  await s.get('/admin/login');
+  assert.equal((await s.post('/admin/login', { login_id: 'admin0002', password: 'testpass1234' })).status, 422, '이전 비밀번호 무효');
+  r = await s.post('/admin/login', { login_id: 'admin0002', password: temp });
+  assert.equal(r.location, '/admin/account');
+  assert.equal((await s.get('/admin/grow')).location, '/admin/account', '바꾸기 전에는 다른 화면 불가');
+  assert.match((await s.get('/admin/account')).text, /임시 비밀번호/);
+  r = await s.post('/admin/account', { login_id: 'admin0002', current: temp, password: temp, password_confirm: temp });
+  assert.match(r.text, /현재 비밀번호와 다른/);
+  r = await s.post('/admin/account', { login_id: 'admin0002', current: temp, password: 'newpass2026', password_confirm: 'newpass2026' });
+  assert.equal(r.location, '/admin');
+  assert.equal((await s.get('/admin/grow')).status, 200);
+  assert.ok(await app.sql.get("SELECT 1 FROM audit_log WHERE action = 'user.password_reset' AND target_id = ?", sid));
+
+  // 같은 아이디로 5회 실패하면 잠금(맞는 비밀번호도 거부)
+  const x = app.client();
+  await x.get('/admin/login');
+  for (let i = 0; i < 5; i++) await x.post('/admin/login', { login_id: 'admin', password: 'wrongpass00' });
+  r = await x.post('/admin/login', { login_id: 'admin', password: 'testpass1234' });
+  assert.match(r.text, /잠시 잠겼습니다/);
 });
 
 test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async (t) => {
@@ -693,7 +753,7 @@ test('PIN 변경·관리자 초기화: 임시 PIN으로 로그인하면 새 PIN�
 
   await addManager(app.db);
   const m = app.client();
-  await m.login('01099990000');
+  await m.adminLogin();
   r = await m.post(`/admin/participants/${uid}/pin-reset`);
   const page = await m.get(r.location);
   const temp = page.text.match(/임시 PIN: (\d{6})/)[1];

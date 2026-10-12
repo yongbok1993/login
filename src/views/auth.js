@@ -39,7 +39,8 @@ export function loginForm(ctx, { phone = '', error }) {
       <button type="submit" class="btn">로그인</button>
     </form>
     <p class="aside-link">처음이신가요? <a href="/register">참여 등록</a></p>
-    <p class="aside-link">PIN을 잊은 경우 ${SITE.orgName}(${SITE.tel})에 문의해 주세요.</p>`);
+    <p class="aside-link">PIN을 잊은 경우 ${SITE.orgName}(${SITE.tel})에 문의해 주세요.</p>
+    <p class="aside-link">기관 관리자는 <a href="/admin/login">관리자 로그인</a></p>`);
 }
 
 /** 최초 등록: 연락처·이름·주소·생년월일·PIN·동의 */

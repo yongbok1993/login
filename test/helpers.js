@@ -2,6 +2,7 @@ import { createApp } from '../src/app.js';
 import { createUnconfiguredAdapter } from '../src/como/adapters.js';
 import { loadConfig } from '../src/config.js';
 import { hashPin } from '../src/lib/pin.js';
+import { hashPassword } from '../src/lib/password.js';
 import { nowIso } from '../src/lib/time.js';
 import { createSession, getProgramByCode } from '../src/services/programs.js';
 import { registerUser, setSelected } from '../src/services/users.js';
@@ -14,6 +15,9 @@ const quiet = { info() {}, warn() {}, error(e) { console.error(e); } };
 export const TEST_PIN = '258147';
 const TEST_SECRET = loadConfig({ APP_ENV: 'test' }).sessionSecret;
 export const testPinHash = () => hashPin(TEST_SECRET, TEST_PIN);
+export const TEST_PASSWORD = 'testpass1234';
+let passwordHashCache;
+export const testPasswordHash = async () => (passwordHashCache ??= await hashPassword(TEST_SECRET, TEST_PASSWORD));
 
 export const CONSENT = { version: 'test-v1', isDraft: false, items: [{ key: 'privacy', title: '개인정보 수집·이용 동의', required: true, body: '' }] };
 
@@ -73,6 +77,14 @@ export class Client {
   }
 
   /** 휴대전화 번호 + PIN 로그인 */
+  async adminLogin(loginId = 'admin', password = TEST_PASSWORD) {
+    await this.get('/admin/login');
+    const r = await this.post('/admin/login', { login_id: loginId, password });
+    if (r.status !== 303) throw new Error(`admin login failed: ${r.status}`);
+    await this.get(r.location);
+    return r;
+  }
+
   async login(phone, pin = TEST_PIN) {
     await this.get('/login');
     const r = await this.post('/login', { phone, pin });
@@ -92,10 +104,13 @@ export function addParticipant(db, { name = '참여자', phone, selected = false
     });
 }
 
+/** 관리자 계정(아이디·비밀번호 설정 완료). 아이디: 기본 번호면 admin, 아니면 admin + 번호 뒤 4자리 */
 export async function addManager(db, phone = '01099990000', role = 'manager') {
   const now = nowIso();
-  return (await run(db, `INSERT INTO users (name, phone, phone_verified_at, role, pin_hash, created_at, updated_at)
-    VALUES ('관리자', ?, ?, ?, ?, ?, ?)`, phone, now, role, await testPinHash(), now, now)).last_row_id;
+  const loginId = phone === '01099990000' ? 'admin' : `admin${phone.slice(-4)}`;
+  return (await run(db, `INSERT INTO users (name, phone, phone_verified_at, role, pin_hash, login_id, password_hash, password_updated_at,
+    created_at, updated_at) VALUES ('관리자', ?, ?, ?, ?, ?, ?, ?, ?, ?)`, phone, now, role, await testPinHash(), loginId,
+  await testPasswordHash(), now, now, now)).last_row_id;
 }
 
 /**
