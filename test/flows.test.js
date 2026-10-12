@@ -292,11 +292,11 @@ test('첫 관리자 지정(/admin/setup)·권한 지정: 로그인 없이 SESSIO
   const c = app.client();
   let r = await c.get('/admin/setup');
   assert.equal(r.status, 200, '로그인 없이 열림');
-  assert.ok(!r.text.includes('아직 SESSION_SECRET이 적용되지 않았습니다'));
+  assert.ok(!r.text.includes('사용할 수 있는 설정 코드가 없습니다'));
   const form = { name: '기관담당', phone: '010-5300-0001', pin: '583920', pin_confirm: '583920' };
   r = await c.post('/admin/setup', { ...form, secret: 'wrong' });
   assert.equal(r.status, 422);
-  assert.match(r.text, /SESSION_SECRET 값이 맞지 않습니다/);
+  assert.match(r.text, /설정 코드가 맞지 않습니다/);
   r = await c.post('/admin/setup', { ...form, secret: app.cfg.sessionSecret, pin: '123456', pin_confirm: '123456' });
   assert.equal(r.status, 422, '약한 PIN 거부');
   assert.equal((await app.sql.get('SELECT role FROM users WHERE id = ?', uid)).role, 'participant');
@@ -489,7 +489,7 @@ test('관리자 배정: internal(통합사례회의) 회차에는 배정 불가'
   assert.match((await p.get('/me')).text, /지역사회 인식개선 캠페인/);
 });
 
-test('첫 관리자 지정: 등록되지 않은 번호면 관리자 계정 생성, SESSION_SECRET 미설정이면 안내하고 지정 불가', async (t) => {
+test('첫 관리자 지정: 등록되지 않은 번호면 관리자 계정 생성, 1회용 설정 코드, 코드·SESSION_SECRET 모두 없으면 지정 불가', async (t) => {
   const app = await startApp();
   t.after(app.close);
   const c = app.client();
@@ -500,14 +500,36 @@ test('첫 관리자 지정: 등록되지 않은 번호면 관리자 계정 생�
   assert.equal(u.role, 'manager');
   assert.equal(u.name, '새관리자');
 
+  assert.equal((await app.sql.get("SELECT COUNT(*) n FROM app_settings WHERE key = 'setup_code_hash'")).n, 0, '관리자가 생기면 설정 코드 폐기');
+
+  // SESSION_SECRET이 없어도 1회용 설정 코드로 지정(대소문자·하이픈 무시), 한 번 쓰면 사라짐
+  const { sha256 } = await import('../src/lib/crypto.js');
   const bare = await startApp({ cfg: { sessionSecret: '' } });
   t.after(bare.close);
+  await bare.sql.run("UPDATE app_settings SET value = ? WHERE key = 'setup_code_hash'", await sha256('setup:v1:ABCD2345EFGH6789'));
   const b = bare.client();
   let p = await b.get('/admin/setup');
-  assert.match(p.text, /아직 SESSION_SECRET이 적용되지 않았습니다/);
-  p = await b.post('/admin/setup', { secret: '', name: 'x', phone: '01054000002', pin: '583920', pin_confirm: '583920' });
+  assert.ok(!p.text.includes('사용할 수 있는 설정 코드가 없습니다'));
+  const info = { name: '김관리', phone: '01054000002', pin: '583920', pin_confirm: '583920' };
+  p = await b.post('/admin/setup', { ...info, secret: '' });
+  assert.equal(p.status, 422, '빈 값 거부');
+  p = await b.post('/admin/setup', { ...info, secret: 'ABCD-2345-EFGH-6780' });
+  assert.equal(p.status, 422, '틀린 코드 거부');
+  p = await b.post('/admin/setup', { ...info, secret: 'abcd-2345-efgh-6789' });
+  assert.equal(p.location, '/admin');
+  assert.equal((await bare.sql.get("SELECT role FROM users WHERE phone = '01054000002'")).role, 'manager');
+  assert.equal((await bare.sql.get("SELECT COUNT(*) n FROM app_settings WHERE key = 'setup_code_hash'")).n, 0);
+
+  // 설정 코드도 SESSION_SECRET도 없으면 안내하고 지정 불가
+  const none = await startApp({ cfg: { sessionSecret: '' } });
+  t.after(none.close);
+  await none.sql.run("DELETE FROM app_settings WHERE key = 'setup_code_hash'");
+  const n = none.client();
+  p = await n.get('/admin/setup');
+  assert.match(p.text, /사용할 수 있는 설정 코드가 없습니다/);
+  p = await n.post('/admin/setup', { ...info, secret: 'abcd-2345-efgh-6789' });
   assert.equal(p.status, 422);
-  assert.equal((await bare.sql.get("SELECT COUNT(*) n FROM users WHERE role = 'manager'")).n, 0);
+  assert.equal((await none.sql.get("SELECT COUNT(*) n FROM users WHERE role = 'manager'")).n, 0);
 });
 
 test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async (t) => {

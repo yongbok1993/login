@@ -1,4 +1,4 @@
-import { randomToken } from '../lib/crypto.js';
+import { randomToken, safeEqual, sha256 } from '../lib/crypto.js';
 import { get, run } from '../lib/db.js';
 import { nowIso } from '../lib/time.js';
 
@@ -26,4 +26,24 @@ export function appSecret(db, envSecret) {
     cache.set(db, p);
   }
   return p;
+}
+
+// ── 첫 관리자 지정용 1회용 설정 코드: 해시만 저장(migrations/0009), 관리자가 지정되면 삭제 ──
+const SETUP_CODE_PREFIX = 'setup:v1:';
+
+/** 대소문자·하이픈·공백 무시 */
+export function normalizeSetupCode(code) {
+  return String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+export async function setupCodeHash(db) {
+  const row = await get(db, "SELECT value FROM app_settings WHERE key = 'setup_code_hash'");
+  return row ? row.value : null;
+}
+
+export async function setupCodeMatches(db, code) {
+  const stored = await setupCodeHash(db);
+  const normalized = normalizeSetupCode(code);
+  if (!stored || normalized.length < 16) return false;
+  return safeEqual(await sha256(SETUP_CODE_PREFIX + normalized), stored);
 }

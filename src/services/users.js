@@ -196,6 +196,8 @@ export async function claimFirstManager(db, { name, phone, pinHash }) {
       phone, pinHash),
     stmt(db, `INSERT INTO audit_log (actor_id, action, target_type, target_id, created_at)
       SELECT id, 'user.setup_manager', 'user', id, ? FROM users WHERE phone = ? AND role = 'manager' AND pin_hash = ?`, now, phone, pinHash),
+    // 관리자가 생기면 1회용 설정 코드는 폐기
+    stmt(db, "DELETE FROM app_settings WHERE key = 'setup_code_hash' AND EXISTS (SELECT 1 FROM users WHERE role = 'manager')"),
   ]);
   const user = await get(db, "SELECT id FROM users WHERE phone = ? AND role = 'manager' AND pin_hash = ?", phone, pinHash);
   return user ? user.id : null;
