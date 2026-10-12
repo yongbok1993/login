@@ -59,13 +59,13 @@ export function requireSelected(c) {
 }
 
 export function requireStaff(c) {
-  if (!c.user) return redirect(c, '/login');
+  if (!c.user) return redirect(c, '/admin/login');
   if (c.user.role !== 'staff' && c.user.role !== 'manager') return deny(c, 403);
   return null;
 }
 
 export function requireManager(c) {
-  if (!c.user) return redirect(c, '/login');
+  if (!c.user) return redirect(c, '/admin/login');
   if (c.user.role !== 'manager') return deny(c, 403);
   return null;
 }

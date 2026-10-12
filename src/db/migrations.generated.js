@@ -86,5 +86,15 @@ export const MIGRATIONS = [
     "statements": [
       "INSERT OR IGNORE INTO app_settings (key, value, updated_at)\nSELECT 'setup_code_hash', 'b92978658c8d0a2a5fce9c6ff9ffb992866f9d20f8940da6472152c4ace48d93', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\nWHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'manager')"
     ]
+  },
+  {
+    "name": "0010_admin_password.sql",
+    "statements": [
+      "ALTER TABLE users ADD COLUMN login_id TEXT",
+      "ALTER TABLE users ADD COLUMN password_hash TEXT",
+      "ALTER TABLE users ADD COLUMN password_must_change INTEGER NOT NULL DEFAULT 0",
+      "ALTER TABLE users ADD COLUMN password_updated_at TEXT",
+      "CREATE UNIQUE INDEX users_login_id ON users(login_id)"
+    ]
   }
 ];

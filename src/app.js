@@ -5,12 +5,13 @@ import { loadConfig } from './config.js';
 import { Router } from './lib/router.js';
 import { purgeExpired, Session } from './lib/session.js';
 import { adminRoutes } from './routes/admin.js';
+import { adminAuthRoutes } from './routes/adminAuth.js';
 import { authRoutes } from './routes/auth.js';
 import { deny, redirect, render, respond } from './routes/helpers.js';
 import { meRoutes } from './routes/me.js';
 import { noticeRoutes } from './routes/notices.js';
 import { groupByTheme, listPrograms } from './services/programs.js';
-import { getUser } from './services/users.js';
+import { getUser, isAdminRole } from './services/users.js';
 import { homePage } from './views/public.js';
 
 const MAX_BODY = 20 * 1024;
@@ -48,6 +49,7 @@ function buildRouter() {
   authRoutes(r);
   noticeRoutes(r);
   meRoutes(r);
+  adminAuthRoutes(r);
   adminRoutes(r);
   return r;
 }
@@ -132,6 +134,10 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
         } else if (c.user && c.user.pin_must_change && !['/account/pin', '/logout'].includes(c.path)) {
           // 관리자가 초기화한 임시 PIN으로 로그인했으면 새 PIN을 정할 때까지 다른 화면을 막는다.
           response = redirect(c, '/account/pin', 302);
+        } else if (isAdminRole(c.user) && (!c.user.password_hash || c.user.password_must_change)
+          && !['/admin/account', '/logout'].includes(c.path)) {
+          // 관리자는 아이디·비밀번호를 정할 때까지(또는 임시 비밀번호를 바꿀 때까지) 다른 화면을 막는다.
+          response = redirect(c, '/admin/account', 302);
         } else if (!match) {
           response = await deny(c, 404);
         } else {

@@ -2,7 +2,7 @@ import { loadConsent } from '../config.js';
 import { normalizePhone } from '../lib/phone.js';
 import { hashPin, pinProblem, verifyPin } from '../lib/pin.js';
 import { loginBlock, PHONE_LOCK_MINUTES, recordAttempt, registerBlocked } from '../services/login.js';
-import { changePhone, findUserByPhone, getUser, parsePersonForm, registerUser, setPin } from '../services/users.js';
+import { changePhone, findUserByPhone, getUser, isAdminRole, parsePersonForm, registerUser, setPin } from '../services/users.js';
 import { loginForm, phoneChangeForm, pinChangeForm, registerForm } from '../views/auth.js';
 import { field, fieldList, redirect, render, requireLogin, requireParticipant } from './helpers.js';
 
@@ -31,9 +31,11 @@ export function authRoutes(r) {
     const block = await loginBlock(db, { phone, ip: c.ip });
     if (block) return fail(`로그인 시도가 많아 잠시 잠겼습니다. ${PHONE_LOCK_MINUTES}분 뒤 다시 시도하거나 기관에 문의해 주세요.`);
     const user = await findUserByPhone(db, phone);
-    const ok = await verifyPin(cfg.sessionSecret, pin, user && user.pin_hash);
-    await recordAttempt(db, { kind: 'login', phone, ip: c.ip, success: ok && !!user });
-    if (!ok || !user) return fail(LOGIN_FAILED);
+    // 아이디·비밀번호를 만든 관리자는 PIN으로 로그인할 수 없다(관리자 로그인 화면 이용).
+    const pinAllowed = user && !(isAdminRole(user) && user.password_hash);
+    const ok = (await verifyPin(cfg.sessionSecret, pin, user && user.pin_hash)) && pinAllowed;
+    await recordAttempt(db, { kind: 'login', phone, ip: c.ip, success: ok });
+    if (!ok) return fail(LOGIN_FAILED);
     await c.session.regenerate(user.id);
     return redirect(c, afterLoginPath(user));
   });
