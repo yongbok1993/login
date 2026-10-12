@@ -42,3 +42,13 @@ export async function registerBlocked(db, ip) {
 export function clearPhoneFailures(db, phone) {
   return run(db, "DELETE FROM login_attempts WHERE kind IN ('login', 'pin') AND phone = ? AND success = 0", phone);
 }
+
+/** 첫 관리자 지정 시도 제한(kind 'pin', 번호 없음으로 기록): IP별 1시간 내 실패 10회, 전체 1시간 내 실패 50회 */
+export async function setupBlocked(db, ip) {
+  const since = ago(3600 * 1000);
+  const total = (await get(db, "SELECT COUNT(*) n FROM login_attempts WHERE kind = 'pin' AND phone IS NULL AND success = 0 AND created_at > ?", since)).n;
+  if (total >= 50) return true;
+  if (!ip) return false;
+  return (await get(db, "SELECT COUNT(*) n FROM login_attempts WHERE kind = 'pin' AND phone IS NULL AND success = 0 AND ip = ? AND created_at > ?",
+    ip, since)).n >= 10;
+}
