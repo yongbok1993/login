@@ -181,6 +181,27 @@ export async function hasManager(db) {
 }
 
 /**
+ * 첫 전체 관리자 지정(전체 관리자가 없을 때만). 번호가 이미 등록돼 있으면 그 계정을 관리자로 바꾸고 PIN을 새로 정한다.
+ * 조건 확인과 저장을 한 batch로 처리해 동시에 두 명이 지정되지 않게 한다. 성공하면 사용자 id, 아니면 null.
+ */
+export async function claimFirstManager(db, { name, phone, pinHash }) {
+  const now = nowIso();
+  await batch(db, [
+    stmt(db, `INSERT INTO users (name, phone, phone_verified_at, role, pin_hash, pin_updated_at, created_at, updated_at)
+      SELECT ?, ?, ?, 'manager', ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'manager')
+      ON CONFLICT(phone) DO UPDATE SET role = 'manager', is_selected = 0, pin_hash = excluded.pin_hash, pin_must_change = 0,
+        pin_updated_at = excluded.pin_updated_at, updated_at = excluded.updated_at`,
+    name, phone, now, pinHash, now, now, now),
+    stmt(db, "DELETE FROM auth_sessions WHERE user_id = (SELECT id FROM users WHERE phone = ? AND role = 'manager' AND pin_hash = ?)",
+      phone, pinHash),
+    stmt(db, `INSERT INTO audit_log (actor_id, action, target_type, target_id, created_at)
+      SELECT id, 'user.setup_manager', 'user', id, ? FROM users WHERE phone = ? AND role = 'manager' AND pin_hash = ?`, now, phone, pinHash),
+  ]);
+  const user = await get(db, "SELECT id FROM users WHERE phone = ? AND role = 'manager' AND pin_hash = ?", phone, pinHash);
+  return user ? user.id : null;
+}
+
+/**
  * 권한 변경. 관리자로 지정하면 참여자 선정을 해제한다(참여자 기능과 관리자 기능을 한 계정에 섞지 않음).
  * 마지막 전체 관리자는 해제할 수 없다.
  */

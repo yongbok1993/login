@@ -6,36 +6,51 @@ import {
 } from '../services/enrollments.js';
 import { createNotice, deleteNotice, getNotice, listNotices, parseNoticeForm, updateNotice } from '../services/notices.js';
 import { safeEqual } from '../lib/crypto.js';
-import { loginBlock, recordAttempt } from '../services/login.js';
+import { recordAttempt, setupBlocked } from '../services/login.js';
+import { normalizePhone } from '../lib/phone.js';
 import {
   createProgram, createSession, getProgram, getSession, linkProgramStats, listPrograms, listSessions, parseProgramForm,
   parseSessionForm, sessionRoster, updateProgram, updateSession,
 } from '../services/programs.js';
 import {
-  confirmPhone, getRegistration, getUser, hasManager, listConsents, listRegistrants, listSelectedParticipants, listStaff, resetPin,
+  claimFirstManager, confirmPhone, getRegistration, getUser, hasManager, listConsents, listRegistrants, listSelectedParticipants, listStaff, resetPin,
   setInternalStatus, setRole, setSelected,
 } from '../services/users.js';
-import { hashPin, temporaryPin } from '../lib/pin.js';
+import { hashPin, pinProblem, temporaryPin } from '../lib/pin.js';
 import { clearPhoneFailures } from '../services/login.js';
 import * as views from '../views/admin.js';
-import { deny, field, fieldList, intParam, redirect, render, requireLogin, requireManager, requireStaff } from './helpers.js';
+import { deny, field, fieldList, intParam, redirect, render, requireManager, requireStaff } from './helpers.js';
 
 export function adminRoutes(r) {
   const staff = requireStaff;
   const manager = requireManager;
 
-  // ── 첫 관리자 지정: 전체 관리자가 한 명도 없을 때만, 로그인한 본인 계정을 SESSION_SECRET 확인 후 관리자로 ──
+  // ── 첫 관리자 지정: 전체 관리자가 한 명도 없을 때만. 로그인 없이 SESSION_SECRET(Cloudflare 환경 변수 원문) 확인 후
+  //    이름·번호·새 PIN으로 관리자 계정을 만들거나, 이미 등록된 번호면 그 계정을 관리자로 바꾸고 PIN을 새로 정한다. ──
   const setupOpen = async (c) => ((await hasManager(c.db)) ? deny(c, 404) : null);
-  r.get('/admin/setup', requireLogin, setupOpen, (c) => render(c, views.setupPage, {}));
-  r.post('/admin/setup', requireLogin, setupOpen, async (c) => {
-    if (await loginBlock(c.db, { phone: c.user.phone })) return render(c, views.setupPage, { error: '시도가 많아 잠시 잠겼습니다.' }, 429);
-    // Cloudflare Pages에 설정한 SESSION_SECRET(32자 이상) 원문과 비교한다. 설정하지 않았으면 지정할 수 없다.
-    const envSecret = c.cfg.envSecret || '';
-    const ok = envSecret.length >= 32 && safeEqual(field(c, 'secret'), envSecret);
-    await recordAttempt(c.db, { kind: 'pin', phone: c.user.phone, ip: c.ip, success: ok });
-    if (!ok) return render(c, views.setupPage, { error: '값이 맞지 않습니다.' }, 422);
-    await setRole(c.db, c.user.id, c.user.id, 'manager');
-    await c.session.regenerate(c.user.id);
+  const setupReady = (c) => (c.cfg.envSecret || '').length >= 32;
+  r.get('/admin/setup', setupOpen, (c) => render(c, views.setupPage, { notReady: !setupReady(c) }));
+  r.post('/admin/setup', setupOpen, async (c) => {
+    const values = { name: field(c, 'name'), phone: field(c, 'phone') };
+    const fail = (errors, status = 422) => render(c, views.setupPage, { values, errors, notReady: !setupReady(c) }, status);
+    if (await setupBlocked(c.db, c.ip)) return fail({ secret: '시도가 많아 잠시 잠겼습니다. 1시간 뒤 다시 시도해 주세요.' }, 429);
+    const ok = setupReady(c) && safeEqual(field(c, 'secret'), c.cfg.envSecret);
+    await recordAttempt(c.db, { kind: 'pin', ip: c.ip, success: ok });
+    if (!ok) return fail({ secret: 'SESSION_SECRET 값이 맞지 않습니다.' });
+    const name = values.name.trim();
+    const phone = normalizePhone(values.phone);
+    const pin = field(c, 'pin');
+    const errors = {};
+    if (!name || name.length > 40) errors.name = '이름을 입력해 주세요.';
+    if (!phone) errors.phone = '휴대전화 번호를 확인해 주세요.';
+    const problem = pinProblem(pin, { phone });
+    if (problem) errors.pin = problem;
+    else if (pin !== field(c, 'pin_confirm')) errors.pin_confirm = 'PIN이 서로 다릅니다.';
+    if (Object.keys(errors).length) return fail(errors);
+    const userId = await claimFirstManager(c.db, { name, phone, pinHash: await hashPin(c.cfg.sessionSecret, pin) });
+    if (!userId) return deny(c, 404);
+    await clearPhoneFailures(c.db, phone);
+    await c.session.regenerate(userId);
     await c.session.flash('ok', '전체 관리자로 지정되었습니다.');
     return redirect(c, '/admin');
   });

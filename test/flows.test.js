@@ -284,26 +284,43 @@ test('공지: 공개 범위별 노출, 관리자 작성·수정·삭제', async 
   assert.equal((await app.sql.get('SELECT COUNT(*) n FROM notices')).n, 1);
 });
 
-test('첫 관리자 지정(/admin/setup)·권한 지정: 관리자가 없을 때만, SESSION_SECRET 확인, 마지막 관리자 보호', async (t) => {
+test('첫 관리자 지정(/admin/setup)·권한 지정: 로그인 없이 SESSION_SECRET 확인, 기존 번호는 관리자로 전환·PIN 재설정, 마지막 관리자 보호', async (t) => {
   const app = await startApp();
   t.after(app.close);
   const uid = await addParticipant(app.db, { name: '기관담당', phone: '01053000001' });
   const other = await addParticipant(app.db, { name: '다른사람', phone: '01053000002' });
   const c = app.client();
-  assert.equal((await c.get('/admin/setup')).location, '/login');
-  await c.login('01053000001');
-  let r = await c.post('/admin/setup', { secret: 'wrong' });
+  let r = await c.get('/admin/setup');
+  assert.equal(r.status, 200, '로그인 없이 열림');
+  assert.ok(!r.text.includes('아직 SESSION_SECRET이 적용되지 않았습니다'));
+  const form = { name: '기관담당', phone: '010-5300-0001', pin: '583920', pin_confirm: '583920' };
+  r = await c.post('/admin/setup', { ...form, secret: 'wrong' });
   assert.equal(r.status, 422);
-  r = await c.post('/admin/setup', { secret: app.cfg.sessionSecret });
+  assert.match(r.text, /SESSION_SECRET 값이 맞지 않습니다/);
+  r = await c.post('/admin/setup', { ...form, secret: app.cfg.sessionSecret, pin: '123456', pin_confirm: '123456' });
+  assert.equal(r.status, 422, '약한 PIN 거부');
+  assert.equal((await app.sql.get('SELECT role FROM users WHERE id = ?', uid)).role, 'participant');
+  r = await c.post('/admin/setup', { ...form, secret: app.cfg.sessionSecret });
   assert.equal(r.location, '/admin');
-  assert.equal((await app.sql.get('SELECT role FROM users WHERE id = ?', uid)).role, 'manager');
-  await c.get('/admin');
+  const u = await app.sql.get('SELECT role, pin_must_change FROM users WHERE id = ?', uid);
+  assert.equal(u.role, 'manager');
+  assert.equal(u.pin_must_change, 0);
+  assert.equal((await c.get('/admin')).status, 200, '바로 관리자 화면');
   assert.equal((await c.get('/admin/setup')).status, 404, '관리자가 생기면 닫힘');
+  assert.ok(await app.sql.get("SELECT 1 FROM audit_log WHERE action = 'user.setup_manager' AND target_id = ?", uid));
+  // 새 PIN으로 로그인, 이전 PIN은 무효
+  const again = app.client();
+  await again.login('01053000001', '583920');
+  assert.equal((await again.get('/admin')).status, 200);
+  const old = app.client();
+  await old.get('/login');
+  assert.equal((await old.post('/login', { phone: '01053000001', pin: TEST_PIN })).status, 422);
 
   // 다른 사람이 같은 경로로 관리자가 될 수 없음
   const o = app.client();
-  await o.login('01053000002');
-  assert.equal((await o.post('/admin/setup', { secret: app.cfg.sessionSecret })).status, 404);
+  await o.get('/login');
+  assert.equal((await o.post('/admin/setup', { ...form, phone: '01053000002', secret: app.cfg.sessionSecret })).status, 404);
+  assert.equal((await app.sql.get('SELECT role FROM users WHERE id = ?', other)).role, 'participant');
 
   // 전체 관리자가 다른 등록자를 운영 담당으로 지정 → 참여자 목록에서 빠짐
   await c.post(`/admin/users/${other}/role`, { role: 'staff' });
@@ -470,6 +487,27 @@ test('관리자 배정: internal(통합사례회의) 회차에는 배정 불가'
   const p = app.client();
   await p.login('01012120001');
   assert.match((await p.get('/me')).text, /지역사회 인식개선 캠페인/);
+});
+
+test('첫 관리자 지정: 등록되지 않은 번호면 관리자 계정 생성, SESSION_SECRET 미설정이면 안내하고 지정 불가', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const c = app.client();
+  await c.get('/admin/setup');
+  const r = await c.post('/admin/setup', { secret: app.cfg.sessionSecret, name: '새관리자', phone: '01054000001', pin: '583920', pin_confirm: '583920' });
+  assert.equal(r.location, '/admin');
+  const u = await app.sql.get("SELECT * FROM users WHERE phone = '01054000001'");
+  assert.equal(u.role, 'manager');
+  assert.equal(u.name, '새관리자');
+
+  const bare = await startApp({ cfg: { sessionSecret: '' } });
+  t.after(bare.close);
+  const b = bare.client();
+  let p = await b.get('/admin/setup');
+  assert.match(p.text, /아직 SESSION_SECRET이 적용되지 않았습니다/);
+  p = await b.post('/admin/setup', { secret: '', name: 'x', phone: '01054000002', pin: '583920', pin_confirm: '583920' });
+  assert.equal(p.status, 422);
+  assert.equal((await bare.sql.get("SELECT COUNT(*) n FROM users WHERE role = 'manager'")).n, 0);
 });
 
 test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async (t) => {
