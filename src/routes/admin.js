@@ -8,6 +8,7 @@ import { createNotice, deleteNotice, getNotice, listNotices, parseNoticeForm, up
 import { safeEqual } from '../lib/crypto.js';
 import { recordAttempt, setupBlocked } from '../services/login.js';
 import { normalizePhone } from '../lib/phone.js';
+import { setupCodeHash, setupCodeMatches } from '../services/settings.js';
 import {
   createProgram, createSession, getProgram, getSession, linkProgramStats, listPrograms, listSessions, parseProgramForm,
   parseSessionForm, sessionRoster, updateProgram, updateSession,
@@ -25,18 +26,20 @@ export function adminRoutes(r) {
   const staff = requireStaff;
   const manager = requireManager;
 
-  // ── 첫 관리자 지정: 전체 관리자가 한 명도 없을 때만. 로그인 없이 SESSION_SECRET(Cloudflare 환경 변수 원문) 확인 후
+  // ── 첫 관리자 지정: 전체 관리자가 한 명도 없을 때만. 로그인 없이 1회용 설정 코드 또는 SESSION_SECRET(Cloudflare 환경 변수 원문) 확인 후
   //    이름·번호·새 PIN으로 관리자 계정을 만들거나, 이미 등록된 번호면 그 계정을 관리자로 바꾸고 PIN을 새로 정한다. ──
   const setupOpen = async (c) => ((await hasManager(c.db)) ? deny(c, 404) : null);
-  const setupReady = (c) => (c.cfg.envSecret || '').length >= 32;
-  r.get('/admin/setup', setupOpen, (c) => render(c, views.setupPage, { notReady: !setupReady(c) }));
+  const envReady = (c) => (c.cfg.envSecret || '').length >= 32;
+  const setupReady = async (c) => envReady(c) || !!(await setupCodeHash(c.db));
+  r.get('/admin/setup', setupOpen, async (c) => render(c, views.setupPage, { notReady: !(await setupReady(c)) }));
   r.post('/admin/setup', setupOpen, async (c) => {
     const values = { name: field(c, 'name'), phone: field(c, 'phone') };
-    const fail = (errors, status = 422) => render(c, views.setupPage, { values, errors, notReady: !setupReady(c) }, status);
+    const fail = async (errors, status = 422) => render(c, views.setupPage, { values, errors, notReady: !(await setupReady(c)) }, status);
     if (await setupBlocked(c.db, c.ip)) return fail({ secret: '시도가 많아 잠시 잠겼습니다. 1시간 뒤 다시 시도해 주세요.' }, 429);
-    const ok = setupReady(c) && safeEqual(field(c, 'secret'), c.cfg.envSecret);
+    const secret = field(c, 'secret').trim();
+    const ok = (envReady(c) && safeEqual(secret, c.cfg.envSecret)) || (await setupCodeMatches(c.db, secret));
     await recordAttempt(c.db, { kind: 'pin', ip: c.ip, success: ok });
-    if (!ok) return fail({ secret: 'SESSION_SECRET 값이 맞지 않습니다.' });
+    if (!ok) return fail({ secret: '설정 코드가 맞지 않습니다.' });
     const name = values.name.trim();
     const phone = normalizePhone(values.phone);
     const pin = field(c, 'pin');

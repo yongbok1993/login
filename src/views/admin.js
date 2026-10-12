@@ -474,12 +474,12 @@ export function setupPage(ctx, { values = {}, errors = {}, notReady = false }) {
     area: 'me',
     body: html`<section class="sec narrow"><div class="wrap">
       <h1 class="page-title">첫 관리자 지정</h1>
-      ${notReady ? html`<p class="error-summary" role="alert">아직 SESSION_SECRET이 적용되지 않았습니다. Cloudflare Pages에 32자 이상으로 설정한 뒤 재배포해야 사용할 수 있습니다.</p>` : ''}
+      ${notReady ? html`<p class="error-summary" role="alert">사용할 수 있는 설정 코드가 없습니다. 기관 담당자에게 문의해 주세요.</p>` : ''}
       ${errorSummary(errors)}
       <form method="post" action="/admin/setup" class="form card" novalidate>
         ${csrfField(ctx)}
-        <p class="small muted">전체 관리자가 아직 없을 때 한 번만 사용합니다. Cloudflare Pages에 설정한 SESSION_SECRET 값과 관리자 정보를 입력하면 전체 관리자 계정이 만들어집니다. 이미 등록한 번호면 그 계정이 관리자가 되고 PIN이 새로 정해집니다.</p>
-        ${input('secret', 'SESSION_SECRET', { type: 'password', secret: true })}
+        <p class="small muted">전체 관리자가 아직 없을 때 한 번만 사용합니다. 설정 코드와 관리자 정보를 입력하면 전체 관리자 계정이 만들어집니다. 이미 등록한 번호면 그 계정이 관리자가 되고 PIN이 새로 정해집니다.</p>
+        ${input('secret', '설정 코드', { type: 'password', secret: true, hint: '전달받은 1회용 설정 코드(또는 SESSION_SECRET). 대소문자·하이픈은 구분하지 않습니다.' })}
         ${input('name', '이름', { autocomplete: 'name', maxlength: 40 })}
         ${input('phone', '휴대전화 번호', { type: 'tel', autocomplete: 'tel', inputmode: 'tel', maxlength: 20, hint: '숫자만 입력해도 됩니다.' })}
         ${input('pin', '새 PIN 6자리', { type: 'password', secret: true, inputmode: 'numeric', autocomplete: 'new-password', maxlength: 6,

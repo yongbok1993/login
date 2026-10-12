@@ -80,5 +80,11 @@ export const MIGRATIONS = [
     "statements": [
       "CREATE TABLE app_settings (\n  key        TEXT PRIMARY KEY,\n  value      TEXT NOT NULL,\n  updated_at TEXT NOT NULL\n)"
     ]
+  },
+  {
+    "name": "0009_setup_code.sql",
+    "statements": [
+      "INSERT OR IGNORE INTO app_settings (key, value, updated_at)\nSELECT 'setup_code_hash', 'b92978658c8d0a2a5fce9c6ff9ffb992866f9d20f8940da6472152c4ace48d93', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')\nWHERE NOT EXISTS (SELECT 1 FROM users WHERE role = 'manager')"
+    ]
   }
 ];
