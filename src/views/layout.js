@@ -4,7 +4,8 @@ import { SITE, THEMES } from '../site.js';
 function navLink(ctx, href, label) {
   const prefixes = {
     '/me/programs': ['/me/programs', '/me/open/', '/me/grow/', '/me/counseling/'],
-    '/me/profile': ['/me/profile', '/me/phone'],
+    '/me/application': ['/me/application', '/account/password'],
+    '/board': ['/board'],
   }[href];
   const current = ctx.path === href
     || (prefixes ? prefixes.some((p) => ctx.path.startsWith(p))
@@ -22,44 +23,53 @@ function logoutForm(ctx) {
 function headerNav(ctx, area) {
   const u = ctx.user;
   const isStaff = u && (u.role === 'staff' || u.role === 'manager');
-  if (area === 'admin') {
+  if (area === 'admin' && isStaff) {
     const manager = u.role === 'manager';
     return html`
-      ${manager ? navLink(ctx, '/admin/participants', '참여자') : ''}
+      ${manager ? navLink(ctx, '/admin/participants', '신청자') : ''}
       ${navLink(ctx, '/admin/programs', '프로그램')}
       ${navLink(ctx, '/admin/grow', 'Grow 선정')}
-      ${navLink(ctx, '/admin/notices', '공지')}
-      ${navLink(ctx, '/admin/link', 'Link 배정')}
+      ${navLink(ctx, '/board', '게시판')}
+      ${navLink(ctx, '/admin/link', 'L 관계 배정')}
       ${manager ? navLink(ctx, '/admin/como', '꼬모 연동') : ''}
       ${manager ? navLink(ctx, '/admin/staff', '관리자') : ''}
       ${manager ? navLink(ctx, '/admin/audit', '변경 기록') : ''}
       ${navLink(ctx, '/admin/account', '내 계정')}
       ${logoutForm(ctx)}`;
   }
-  if (!u) {
-    return html`${navLink(ctx, '/#programs', '프로그램')}${navLink(ctx, '/notices', '공지')}${navLink(ctx, '/me', '나의 현황')}${navLink(ctx, '/login', '로그인')}`;
-  }
-  if (isStaff) return html`${navLink(ctx, '/admin', '관리')}${logoutForm(ctx)}`;
+  if (!u) return html`${navLink(ctx, '/register', '신청하기')}${navLink(ctx, '/login', '로그인')}`;
+  if (isStaff) return html`${navLink(ctx, '/admin', '관리')}${navLink(ctx, '/board', '게시판')}${logoutForm(ctx)}`;
+  // 승인 대기·승인 해제·이용 중지: 내 신청정보만
+  if (!(u.is_selected && u.account_status === 'active')) return html`${navLink(ctx, '/me', '내 신청정보')}${logoutForm(ctx)}`;
   return html`
     ${navLink(ctx, '/me', '나의 현황')}
-    ${u.is_selected ? navLink(ctx, '/me/programs', '프로그램') : navLink(ctx, '/#programs', '프로그램')}
-    ${navLink(ctx, '/notices', '공지')}
-    ${navLink(ctx, '/me/profile', '내 정보')}
+    ${navLink(ctx, '/me/programs', '프로그램')}
+    ${navLink(ctx, '/board', '게시판')}
+    ${navLink(ctx, '/me/application', '내 신청정보')}
     ${logoutForm(ctx)}`;
 }
 
 export function brand(href = '/') {
-  return html`<a class="brand" href="${href}">로그<em>人</em><small>LOGIN : 人</small></a>`;
+  return html`<a class="brand" href="${href}" aria-label="${SITE.serviceName} 처음으로">${wordmark()}<small>${SITE.serviceSub}</small></a>`;
+}
+
+/** 사이트 브랜드 표기: LOG(영문 대문자) + 人(한자) */
+export function wordmark() {
+  return html`LOG<em>人</em>`;
 }
 
 export function layout(ctx, { title, body, area = 'public', scripts = [] }) {
-  const showCta = area === 'public' && !ctx.user;
   return html`<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${title ? `${title} | ` : ''}로그人</title>
+<title>${title ? `${title} | ` : ''}${SITE.serviceName}</title>
+<meta name="description" content="${SITE.serviceName}(${SITE.serviceSub}) · ${SITE.orgName} ${SITE.projectName}">
+<meta property="og:site_name" content="${SITE.serviceName}">
+<meta property="og:title" content="${title ? `${title} | ` : ''}${SITE.serviceName}">
+<meta property="og:description" content="${SITE.orgName} ${SITE.projectName}">
+<meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&family=Noto+Sans+KR:wght@400;500;700&display=swap">
@@ -73,7 +83,7 @@ ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
     ${brand(area === 'admin' ? '/admin' : '/')}
     ${area === 'admin' ? html`<span class="area-tag">관리</span>` : ''}
     <nav aria-label="주 메뉴">${headerNav(ctx, area)}</nav>
-    ${showCta ? html`<a class="cta" href="/register">참여 등록</a>` : ''}
+
   </div>
 </header>
 <main id="main">
@@ -83,7 +93,7 @@ ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
 </main>
 <footer>
   <div class="wrap">
-    <div class="brand">로그<em>人</em><small>LOGIN : 人</small></div>
+    <div class="brand" role="img" aria-label="${SITE.serviceName}">${wordmark()}<small>${SITE.serviceSub}</small></div>
     <p><b>${SITE.orgName}</b> · ${SITE.address} · TEL ${SITE.tel}</p>
   </div>
 </footer>
@@ -91,9 +101,11 @@ ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
 </html>`;
 }
 
+/** 도장 배지. label이 배열이면 줄을 나눠 표시한다(예: ['지역사회', 'Network']). */
 export function stamp(theme, label) {
   const t = THEMES[theme];
-  return html`<div class="stamp ${t.key}" aria-hidden="true"><b>${t.letter}</b><span>${label}</span></div>`;
+  const lines = [].concat(label);
+  return html`<div class="stamp ${t.key}" aria-hidden="true"><b>${t.letter}</b><span>${lines.map((x, i) => html`${i ? html`<br>` : ''}${x}`)}</span></div>`;
 }
 
 export function themeDot(theme) {

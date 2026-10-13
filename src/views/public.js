@@ -1,32 +1,34 @@
 import { html } from '../lib/html.js';
-import { SITE } from '../site.js';
-import { layout, stamp, themeDot } from './layout.js';
+import { canUseInternal, isAdminRole } from '../services/users.js';
+import { SITE, THEME_ORDER, THEMES } from '../site.js';
+import { REVIEW_NOTICE } from './application.js';
+import { layout, stamp, themeDot, wordmark } from './layout.js';
 
 function programItems(list) {
   return list.map((p) => html`<li>${p.name} <small>${p.detail ? html`${p.detail}<br>` : ''}${p.schedule_label}</small></li>`);
 }
 
-// 공개 프로그램 카드. 꼬모 링크·상담 신청 버튼을 두지 않는다.
+/** 프로그램 카드(L·O·G·IN 같은 구성). 승인된 참여자와 관리자에게만 보여 준다. */
 export function programCards(groups) {
   return html`
-    <div class="log-grid">
-      <article class="log-card l">
-        ${stamp('L', '관계')}
-        <h3>관계</h3><span class="en">LINK</span>
-        <ul>${programItems(groups.L)}</ul>
-      </article>
-      <article class="log-card o">
-        ${stamp('O', '마음')}
-        <h3>마음</h3><span class="en">OPEN</span>
-        <ul>${programItems(groups.O)}</ul>
-      </article>
-      <article class="log-card g">
-        ${stamp('G', '성장')}
-        <h3>성장</h3><span class="en">GROW</span>
-        <ul>${programItems(groups.G)}</ul>
-        <span class="mode">희망 활동 직접 선택</span>
-      </article>
+    <div class="log-grid four">
+      ${THEME_ORDER.map((k) => {
+        const t = THEMES[k];
+        return html`<article class="log-card ${t.key}">
+          ${stamp(k, t.short)}
+          <h3>${t.title}</h3><span class="en">${t.en.toUpperCase()}</span>
+          <ul>${programItems(groups[k] || [])}</ul>
+        </article>`;
+      })}
     </div>`;
+}
+
+function heroButtons(ctx) {
+  const u = ctx.user;
+  if (!u) return html`<a class="btn" href="/register">신청하기</a><a class="btn ghost" href="/login">로그인</a>`;
+  if (isAdminRole(u)) return html`<a class="btn" href="/admin">관리</a><a class="btn ghost" href="/board">게시판</a>`;
+  if (canUseInternal(u)) return html`<a class="btn" href="/me">나의 현황</a><a class="btn ghost" href="/board">게시판</a>`;
+  return html`<a class="btn" href="/me">내 신청정보</a>`;
 }
 
 export function homePage(ctx, groups) {
@@ -35,27 +37,24 @@ export function homePage(ctx, groups) {
     <div class="wrap">
       <div>
         <p class="eyebrow">${SITE.orgName} · ${SITE.projectName}</p>
-        <h1 class="wordmark">로그<em>人</em></h1>
+        <h1 class="wordmark">${wordmark()}</h1>
         <p class="themes-line">
-          <b>${themeDot('L')}L 관계 — Link</b>
-          <b>${themeDot('O')}O 마음 — Open</b>
-          <b>${themeDot('G')}G 성장 — Grow</b>
+          ${THEME_ORDER.map((k) => html`<b>${themeDot(k)}${THEMES[k].letter} ${THEMES[k].short} — ${THEMES[k].en}</b>`)}
         </p>
-        <div class="btns">
-          ${ctx.user ? html`<a class="btn" href="/me">나의 현황</a>` : html`<a class="btn" href="/register">참여 등록</a>`}
-        </div>
+        <div class="btns">${heroButtons(ctx)}</div>
+        ${ctx.user ? '' : html`<p class="hero-note">${REVIEW_NOTICE}</p>`}
       </div>
       <div class="stamps" aria-hidden="true">
-        ${stamp('L', '관계 · Link')}${stamp('O', '마음 · Open')}${stamp('G', '성장 · Grow')}
+        ${THEME_ORDER.map((k) => stamp(k, [THEMES[k].short, THEMES[k].en]))}
       </div>
     </div>
   </section>
-  <section id="programs" class="sec">
+  ${groups ? html`<section id="programs" class="sec">
     <div class="wrap">
       <div class="sec-head"><h2>프로그램</h2></div>
       ${programCards(groups)}
     </div>
-  </section>`;
+  </section>` : ''}`;
   return layout(ctx, { title: '', body });
 }
 

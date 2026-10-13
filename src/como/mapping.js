@@ -4,7 +4,7 @@ import { audit } from '../services/audit.js';
 
 /**
  * 전화번호 기준 꼬모 계정 매핑.
- * - 로그人 쪽 번호는 관리자가 확인한 번호만 쓴다(users.phone_confirmed_at). 문자 인증이 없으므로
+ * - LOG人 쪽 번호는 관리자가 확인한 번호만 쓴다(users.phone_confirmed_at). 문자 인증이 없으므로
  *   확인 전 번호로 조회하면 남의 번호를 입력한 사람이 그 번호의 상담 현황을 볼 수 있기 때문이다.
  * - 꼬모 계정이 0개: not_found, 2개 이상: conflict(자동 연결 중단, 관리자 확인).
  * - 같은 꼬모 계정이 이미 다른 사용자와 연결돼 있거나 이름이 다르면 conflict.

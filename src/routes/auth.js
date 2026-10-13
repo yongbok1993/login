@@ -1,21 +1,24 @@
 import { loadConsent } from '../config.js';
 import { normalizePhone } from '../lib/phone.js';
-import { hashPin, pinProblem, verifyPin } from '../lib/pin.js';
+import { hashPassword, passwordProblem, verifyPassword } from '../lib/password.js';
+import { verifyPin } from '../lib/pin.js';
 import { loginBlock, PHONE_LOCK_MINUTES, recordAttempt, registerBlocked } from '../services/login.js';
-import { changePhone, findUserByPhone, getUser, isAdminRole, parsePersonForm, registerUser, setPin } from '../services/users.js';
-import { loginForm, phoneChangeForm, pinChangeForm, registerForm } from '../views/auth.js';
+import { completeReset, findValidReset } from '../services/passwordReset.js';
+import { findUserByPhone, getApplication, isAdminRole, parseName, registerUser, setPassword } from '../services/users.js';
+import { loginForm, passwordChangeForm, registerDonePage, registerForm, resetForm } from '../views/auth.js';
 import { field, fieldList, redirect, render, requireLogin, requireParticipant } from './helpers.js';
 
-function afterLoginPath(user) {
-  if (user.pin_must_change) return '/account/pin';
+export function afterLoginPath(user) {
+  if (!user.password_hash) return isAdminRole(user) ? '/admin/account' : '/account/password';
   return user.role === 'participant' ? '/me' : '/admin';
 }
 
-const LOGIN_FAILED = '휴대전화 번호 또는 PIN이 맞지 않습니다.';
+const LOGIN_FAILED = '휴대전화 번호 또는 비밀번호가 맞지 않습니다.';
 
 /**
- * 휴대전화 번호 + PIN 6자리 로그인·최초 등록.
+ * 로그인(휴대전화 번호 + 비밀번호)·참여 신청·비밀번호 변경·재설정.
  * 로그인 실패 문구는 번호 등록 여부와 관계없이 같다. 번호별·IP별 실패 횟수로 잠근다.
+ * 비밀번호가 아직 없는 기존 PIN 계정은 PIN으로 한 번 로그인한 뒤 새 비밀번호를 정해야 다른 화면을 쓸 수 있다.
  */
 export function authRoutes(r) {
   // ── 로그인 ──
@@ -25,22 +28,26 @@ export function authRoutes(r) {
     const { db, cfg } = c;
     const phoneInput = field(c, 'phone');
     const phone = normalizePhone(phoneInput);
-    const pin = field(c, 'pin');
+    const password = field(c, 'password');
     const fail = (error) => render(c, loginForm, { phone: phoneInput, error }, 422);
     if (!phone) return fail('휴대전화 번호를 확인해 주세요.');
-    const block = await loginBlock(db, { phone, ip: c.ip });
-    if (block) return fail(`로그인 시도가 많아 잠시 잠겼습니다. ${PHONE_LOCK_MINUTES}분 뒤 다시 시도하거나 기관에 문의해 주세요.`);
+    if (await loginBlock(db, { phone, ip: c.ip })) {
+      return fail(`로그인 시도가 많아 잠시 잠겼습니다. ${PHONE_LOCK_MINUTES}분 뒤 다시 시도하거나 기관에 문의해 주세요.`);
+    }
     const user = await findUserByPhone(db, phone);
-    // 아이디·비밀번호를 만든 관리자는 PIN으로 로그인할 수 없다(관리자 로그인 화면 이용).
-    const pinAllowed = user && !(isAdminRole(user) && user.password_hash);
-    const ok = (await verifyPin(cfg.sessionSecret, pin, user && user.pin_hash)) && pinAllowed;
+    let ok;
+    if (user && !user.password_hash && user.pin_hash && /^\d{6}$/.test(password)) {
+      ok = await verifyPin(cfg.sessionSecret, password, user.pin_hash); // 기존 PIN 계정 전환용
+    } else {
+      ok = (await verifyPassword(cfg.sessionSecret, password, user && user.password_hash)) && !!user;
+    }
     await recordAttempt(db, { kind: 'login', phone, ip: c.ip, success: ok });
     if (!ok) return fail(LOGIN_FAILED);
     await c.session.regenerate(user.id);
     return redirect(c, afterLoginPath(user));
   });
 
-  // ── 최초 등록 ──
+  // ── 참여 신청 ──
   r.get('/register', (c) => {
     if (c.user) return redirect(c, afterLoginPath(c.user), 302);
     return render(c, registerForm, { consent: loadConsent(c.cfg) });
@@ -48,81 +55,90 @@ export function authRoutes(r) {
 
   r.post('/register', async (c) => {
     const { db, cfg } = c;
+    if (c.user) return redirect(c, afterLoginPath(c.user)); // 이미 신청·로그인된 상태의 재전송
     const consent = loadConsent(cfg);
-    const { value, errors } = parsePersonForm(c.body);
+    const { name, error: nameError } = parseName(c.body);
     const phoneInput = field(c, 'phone');
     const phone = normalizePhone(phoneInput);
-    const pin = field(c, 'pin');
+    const password = field(c, 'password');
     const agreed = fieldList(c, 'consent');
-    if (!phone) errors.phone = '휴대전화 번호를 확인해 주세요.';
-    const problem = pinProblem(pin, { birthDate: value.birth_date, phone });
-    if (problem) errors.pin = problem;
-    else if (pin !== field(c, 'pin_confirm')) errors.pin_confirm = 'PIN이 서로 다릅니다.';
+    const errors = {};
+    if (nameError) errors.name = nameError;
+    if (!phone) errors.phone = phoneInput ? '휴대전화 번호를 확인해 주세요.' : '휴대전화 번호를 입력해 주세요.';
+    const problem = passwordProblem(password, { phone });
+    if (problem) errors.password = problem;
+    else if (password !== field(c, 'password_confirm')) errors.password_confirm = '비밀번호가 서로 다릅니다.';
     if (consent.items.some((i) => i.required && !agreed.includes(i.key))) errors.consent = '필수 항목에 동의해 주세요.';
-    const values = { ...value, phone: phoneInput, consent: agreed };
+    const values = { name, phone: phoneInput, consent: agreed };
     if (Object.keys(errors).length) return render(c, registerForm, { consent, values, errors }, 422);
     if (await registerBlocked(db, c.ip)) {
       return render(c, registerForm, { consent, values, errors: { phone: '잠시 후 다시 시도해 주세요.' } }, 429);
     }
     await recordAttempt(db, { kind: 'register', phone, ip: c.ip, success: true });
     const userId = await registerUser(db, {
-      name: value.name, phone, address: value.address, addressDetail: value.address_detail, postcode: value.postcode,
-      birthDate: value.birth_date,
-      pinHash: await hashPin(cfg.sessionSecret, pin), consent, agreedKeys: agreed,
+      name, phone, passwordHash: await hashPassword(cfg.sessionSecret, password), consent, agreedKeys: agreed,
     });
     if (!userId) {
-      return render(c, registerForm, { consent, values, errors: { phone: '이미 등록된 번호입니다. 로그인해 주세요.' } }, 409);
+      return render(c, registerForm, { consent, values, errors: { phone: '이미 신청된 번호입니다. 로그인해 주세요.' } }, 409);
     }
     await c.session.regenerate(userId);
-    await c.session.flash('ok', '등록이 완료되었습니다.');
-    return redirect(c, '/me');
+    return redirect(c, '/register/done');
   });
+
+  r.get('/register/done', requireParticipant, async (c) => render(c, registerDonePage, await getApplication(c.db, c.user.id)));
 
   r.post('/logout', async (c) => {
     await c.session.destroy();
     return redirect(c, '/');
   });
 
-  // ── PIN 변경(본인). 관리자가 초기화한 임시 PIN으로 로그인하면 여기로 온다. ──
-  r.get('/account/pin', requireLogin, (c) => render(c, pinChangeForm, { forced: !!c.user.pin_must_change }));
+  // ── 비밀번호 변경(본인). 기존 PIN 계정은 PIN 확인 후 첫 비밀번호를 정한다. ──
+  r.get('/account/password', requireLogin, (c) => render(c, passwordChangeForm, {}));
 
-  r.post('/account/pin', requireLogin, async (c) => {
+  r.post('/account/password', requireLogin, async (c) => {
     const { db, cfg, user } = c;
-    const area = user.role === 'participant' ? 'me' : 'admin';
-    const forced = !!user.pin_must_change;
-    const fail = (errors) => render(c, pinChangeForm, { forced, errors, area }, 422);
-    if (await loginBlock(db, { phone: user.phone })) return fail({ current_pin: '시도가 많아 잠시 잠겼습니다. 잠시 후 다시 시도해 주세요.' });
-    const okCurrent = await verifyPin(cfg.sessionSecret, field(c, 'current_pin'), user.pin_hash);
+    const fail = (errors, status = 422) => render(c, passwordChangeForm, { errors }, status);
+    if (await loginBlock(db, { phone: user.phone })) return fail({ current: '시도가 많아 잠시 잠겼습니다. 잠시 후 다시 시도해 주세요.' }, 429);
+    const current = field(c, 'current');
+    const okCurrent = user.password_hash
+      ? await verifyPassword(cfg.sessionSecret, current, user.password_hash)
+      : await verifyPin(cfg.sessionSecret, current, user.pin_hash);
     await recordAttempt(db, { kind: 'pin', phone: user.phone, ip: c.ip, success: okCurrent });
-    if (!okCurrent) return fail({ current_pin: '현재 PIN이 맞지 않습니다.' });
-    const pin = field(c, 'pin');
-    const problem = pinProblem(pin, { birthDate: user.birth_date, phone: user.phone });
-    if (problem) return fail({ pin: problem });
-    if (await verifyPin(cfg.sessionSecret, pin, user.pin_hash)) return fail({ pin: '현재 PIN과 다른 번호를 입력해 주세요.' });
-    if (pin !== field(c, 'pin_confirm')) return fail({ pin_confirm: 'PIN이 서로 다릅니다.' });
-    await setPin(db, user.id, await hashPin(cfg.sessionSecret, pin), c.session.tokenHash);
+    if (!okCurrent) return fail({ current: user.password_hash ? '현재 비밀번호가 맞지 않습니다.' : 'PIN이 맞지 않습니다.' });
+    const password = field(c, 'password');
+    const problem = passwordProblem(password, { phone: user.phone, loginId: user.login_id });
+    if (problem) return fail({ password: problem });
+    if (password === current) return fail({ password: '지금 쓰는 비밀번호와 다른 비밀번호를 입력해 주세요.' });
+    if (password !== field(c, 'password_confirm')) return fail({ password_confirm: '비밀번호가 서로 다릅니다.' });
+    await setPassword(db, user.id, await hashPassword(cfg.sessionSecret, password), c.session.tokenHash);
     await c.session.regenerate(user.id);
-    await c.session.flash('ok', 'PIN이 변경되었습니다.');
-    return redirect(c, afterLoginPath(await getUser(db, user.id)));
+    await c.session.flash('ok', '비밀번호가 저장되었습니다. 다음부터 휴대전화 번호와 이 비밀번호로 로그인합니다.');
+    return redirect(c, user.role === 'participant' ? '/me' : '/admin');
   });
 
-  // ── 전화번호 변경(현재 PIN 확인). 새 번호는 관리자가 다시 확인하기 전까지 꼬모 연동에 쓰지 않는다. ──
-  r.get('/me/phone', requireParticipant, (c) => render(c, phoneChangeForm, {}));
+  // ── 비밀번호 재설정: 담당자가 본인 확인 후 발급한 1회용 코드로 본인이 새 비밀번호를 정한다. ──
+  r.get('/password/reset', (c) => render(c, resetForm, {}));
 
-  r.post('/me/phone', requireParticipant, async (c) => {
-    const { db, cfg, user } = c;
+  r.post('/password/reset', async (c) => {
+    const { db, cfg } = c;
     const phoneInput = field(c, 'phone');
     const phone = normalizePhone(phoneInput);
-    const fail = (errors) => render(c, phoneChangeForm, { phone: phoneInput, errors }, 422);
+    const fail = (errors, status = 422) => render(c, resetForm, { phone: phoneInput, errors }, status);
     if (!phone) return fail({ phone: '휴대전화 번호를 확인해 주세요.' });
-    if (phone === user.phone) return fail({ phone: '현재 번호와 같습니다.' });
-    if (await loginBlock(db, { phone: user.phone })) return fail({ pin: '시도가 많아 잠시 잠겼습니다. 잠시 후 다시 시도해 주세요.' });
-    const ok = await verifyPin(cfg.sessionSecret, field(c, 'pin'), user.pin_hash);
-    await recordAttempt(db, { kind: 'pin', phone: user.phone, ip: c.ip, success: ok });
-    if (!ok) return fail({ pin: 'PIN이 맞지 않습니다.' });
-    if (!(await changePhone(db, user.id, phone, c.session.tokenHash))) return fail({ phone: '이미 사용 중인 번호입니다.' });
-    await c.session.regenerate(user.id);
-    await c.session.flash('ok', '번호가 변경되었습니다.');
-    return redirect(c, '/me/profile');
+    const key = `reset:${phone}`;
+    if (await loginBlock(db, { phone: key, ip: c.ip })) return fail({ code: '시도가 많아 잠시 잠겼습니다. 담당자에게 문의해 주세요.' }, 429);
+    const user = await findUserByPhone(db, phone);
+    const reset = user && (await findValidReset(db, user.id, field(c, 'code')));
+    await recordAttempt(db, { kind: 'login', phone: key, ip: c.ip, success: !!reset });
+    if (!reset) return fail({ code: '휴대전화 번호 또는 재설정 코드가 맞지 않거나 만료되었습니다.' });
+    const password = field(c, 'password');
+    const problem = passwordProblem(password, { phone, loginId: user.login_id });
+    if (problem) return fail({ password: problem });
+    if (password !== field(c, 'password_confirm')) return fail({ password_confirm: '비밀번호가 서로 다릅니다.' });
+    if (!(await completeReset(db, reset, await hashPassword(cfg.sessionSecret, password)))) {
+      return fail({ code: '이미 사용된 코드입니다.' }, 409);
+    }
+    await c.session.flash('ok', '비밀번호를 바꿨습니다. 새 비밀번호로 로그인해 주세요.');
+    return redirect(c, isAdminRole(user) && user.login_id ? '/admin/login' : '/login');
   });
 }

@@ -85,9 +85,9 @@ export class Client {
     return r;
   }
 
-  async login(phone, pin = TEST_PIN) {
+  async login(phone, password = TEST_PASSWORD) {
     await this.get('/login');
-    const r = await this.post('/login', { phone, pin });
+    const r = await this.post('/login', { phone, password });
     if (r.status !== 303) throw new Error(`login failed: ${r.status}`);
     // 로그인 시 세션이 새로 발급되므로 CSRF 토큰을 다시 읽는다.
     await this.get(r.location);
@@ -95,13 +95,24 @@ export class Client {
   }
 }
 
-export function addParticipant(db, { name = '참여자', phone, selected = false }) {
-  return testPinHash().then((pinHash) => registerUser(db, {
-    name, phone, address: '주소', birthDate: '1970-01-01', pinHash, consent: CONSENT, agreedKeys: ['privacy'],
-  })).then(async (id) => {
-      if (selected) await setSelected(db, null, id, true);
-      return id;
-    });
+/** 신청한 참여자(비밀번호 TEST_PASSWORD). selected면 승인까지 */
+export async function addParticipant(db, { name = '참여자', phone, selected = false }) {
+  const id = await registerUser(db, { name, phone, passwordHash: await testPasswordHash(), consent: CONSENT, agreedKeys: ['privacy'] });
+  if (selected) {
+    const r = await setSelected(db, null, id, true);
+    if (r && r.cap) throw new Error('participant_cap');
+  }
+  return id;
+}
+
+/** 개편 전 방식(PIN만 있고 비밀번호 없음)으로 등록된 참여자 */
+export async function addLegacyPinUser(db, { name = '기존참여자', phone, selected = false }) {
+  const now = nowIso();
+  const id = (await run(db, `INSERT INTO users (name, phone, phone_verified_at, address, birth_date, pin_hash, pin_updated_at, created_at, updated_at)
+    VALUES (?, ?, ?, '기존 주소', '1970-01-01', ?, ?, ?, ?)`, name, phone, now, await testPinHash(), now, now, now)).last_row_id;
+  await run(db, 'INSERT INTO registrations (user_id, registered_at, updated_at) VALUES (?, ?, ?)', id, now, now);
+  if (selected) await setSelected(db, null, id, true);
+  return id;
 }
 
 /** 관리자 계정(아이디·비밀번호 설정 완료). 아이디: 기본 번호면 admin, 아니면 admin + 번호 뒤 4자리 */

@@ -1,3 +1,4 @@
+import { canUseInternal, isApprovedParticipant } from '../services/users.js';
 import { errorPage } from '../views/public.js';
 
 export function respond(c, body, { status = 200, type = 'text/html; charset=utf-8' } = {}) {
@@ -40,21 +41,38 @@ export async function deny(c, status, message) {
 }
 
 // ── 접근 제어(핸들러 앞에 둔다. Response를 돌려주면 처리 중단) ──
+// 메뉴 노출과 관계없이 모든 화면·요청에서 서버가 로그인·역할·승인 상태를 확인한다.
+// 사용자 정보는 요청마다 DB에서 다시 읽으므로 승인 해제·이용 중지·로그아웃은 즉시 반영된다.
 
 export function requireLogin(c) {
   return c.user ? null : redirect(c, '/login');
 }
 
+/** 참여자(승인 대기 포함) 본인 화면 */
 export function requireParticipant(c) {
   if (!c.user) return redirect(c, '/login');
   if (c.user.role !== 'participant') return redirect(c, '/admin');
   return null;
 }
 
-/** 선정된 참여자만. 링크 노출 여부와 별개로 서버에서 확인한다. */
+function notApprovedMessage(user) {
+  if (user.account_status === 'suspended') return '이용이 중지된 상태입니다. 자세한 내용은 담당자에게 문의해 주세요.';
+  return '신청이 접수되었습니다. 참여 확정 후 내부 서비스를 이용할 수 있습니다.';
+}
+
+/** 승인된(이용 중인) 참여자만 */
 export function requireSelected(c) {
   if (!c.user) return redirect(c, '/login');
-  if (c.user.role !== 'participant' || !c.user.is_selected) return deny(c, 403, '선정된 참여자만 이용할 수 있습니다.');
+  if (!isApprovedParticipant(c.user)) {
+    return c.user.role === 'participant' ? deny(c, 403, notApprovedMessage(c.user)) : deny(c, 403);
+  }
+  return null;
+}
+
+/** 내부 서비스(게시판 등): 승인된 참여자와 관리자 */
+export function requireMember(c) {
+  if (!c.user) return redirect(c, '/login');
+  if (!canUseInternal(c.user)) return deny(c, 403, notApprovedMessage(c.user));
   return null;
 }
 

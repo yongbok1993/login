@@ -4,8 +4,8 @@ import { get } from '../lib/db.js';
 import { applyGrow, cancelOwnGrow, EnrollError, growApplyBlocker } from '../services/enrollments.js';
 import { getSession, groupByTheme, listPrograms } from '../services/programs.js';
 import { attendedFor, groupAttended, growSessionsFor, nextAction, pendingWishCount, upcomingFor } from '../services/schedule.js';
-import { audiencesFor, listNotices } from '../services/notices.js';
-import { listConsents, parsePersonForm, updateProfile } from '../services/users.js';
+import { recentNotices } from '../services/board.js';
+import { getApplication, isApprovedParticipant, listConsents, parseName, updateName } from '../services/users.js';
 import * as views from '../views/me.js';
 import { deny, intParam, redirect, render, requireParticipant, requireSelected } from './helpers.js';
 
@@ -20,8 +20,15 @@ export function meRoutes(r) {
     return counselingView(c.db, c.como, c.user);
   }
 
+  // 내 신청정보: 신청 시각 → 이름 → 전화번호 → 신청 상태. 본인 것만 조회한다.
+  const application = async (c, extra = {}, status = 200) => render(c, views.applicationPage, {
+    app: await getApplication(c.db, c.user.id), consents: await listConsents(c.db, c.user.id), consentDoc: loadConsent(c.cfg),
+    canEdit: isApprovedParticipant(c.user), ...extra,
+  }, status);
+
   r.get('/me', requireParticipant, async (c) => {
-    if (!c.user.is_selected) return render(c, views.notSelectedPage, undefined);
+    // 승인 대기·승인 해제·이용 중지: 본인 신청정보만
+    if (!isApprovedParticipant(c.user)) return application(c);
     const upcoming = await upcomingFor(c.db, c.user.id);
     return render(c, views.statusPage, {
       next: nextAction(upcoming),
@@ -29,7 +36,7 @@ export function meRoutes(r) {
       attended: groupAttended(await attendedFor(c.db, c.user.id)),
       counseling: await counseling(c),
       pendingWishes: await pendingWishCount(c.db, c.user.id),
-      notices: await listNotices(c.db, { audiences: audiencesFor(c.user), limit: 3 }),
+      notices: await recentNotices(c.db, 3),
     });
   });
 
@@ -39,7 +46,7 @@ export function meRoutes(r) {
     growSessions: await growSessionsFor(c.db, c.user.id),
   }));
 
-  // O 마음 → 전문 심리상담
+  // O 마음 → 개별 심리상담
   r.get('/me/open/counseling', requireSelected, async (c) => render(c, views.counselingPage, await counseling(c)));
 
   // 상담신청하기: 선정 여부를 서버에서 확인한 뒤 꼬모로 이동. 전화번호 등은 전달하지 않는다.
@@ -93,19 +100,16 @@ export function meRoutes(r) {
     return redirect(c, '/me/programs');
   });
 
-  const profile = async (c, extra = {}, status = 200) => render(c, views.profilePage, {
-    user: c.user, consents: await listConsents(c.db, c.user.id), consentDoc: loadConsent(c.cfg), ...extra,
-  }, status);
+  r.get('/me/application', requireParticipant, (c) => application(c));
 
-  r.get('/me/profile', requireParticipant, (c) => profile(c));
-
-  r.post('/me/profile', requireParticipant, async (c) => {
-    const { value, errors } = parsePersonForm(c.body);
-    if (Object.keys(errors).length) return profile(c, { values: value, errors }, 422);
-    await updateProfile(c.db, c.user.id, {
-      name: value.name, address: value.address, addressDetail: value.address_detail, postcode: value.postcode, birthDate: value.birth_date,
-    });
+  // 이름만 수정할 수 있다(승인된 참여자). 최초 신청 시각·전화번호는 바뀌지 않는다.
+  r.post('/me/application', requireSelected, async (c) => {
+    const { name, error } = parseName(c.body);
+    if (error) return application(c, { values: { name }, errors: { name: error } }, 422);
+    await updateName(c.db, c.user.id, name);
     await c.session.flash('ok', '저장되었습니다.');
-    return redirect(c, '/me/profile');
+    return redirect(c, '/me/application');
   });
+
+  r.get('/me/profile', requireParticipant, (c) => redirect(c, '/me/application', 301));
 }

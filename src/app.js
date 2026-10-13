@@ -6,12 +6,12 @@ import { Router } from './lib/router.js';
 import { purgeExpired, Session } from './lib/session.js';
 import { adminRoutes } from './routes/admin.js';
 import { adminAuthRoutes } from './routes/adminAuth.js';
-import { authRoutes } from './routes/auth.js';
+import { afterLoginPath, authRoutes } from './routes/auth.js';
+import { boardRoutes } from './routes/board.js';
 import { deny, redirect, render, respond } from './routes/helpers.js';
 import { meRoutes } from './routes/me.js';
-import { noticeRoutes } from './routes/notices.js';
 import { groupByTheme, listPrograms } from './services/programs.js';
-import { getUser, isAdminRole } from './services/users.js';
+import { canUseInternal, getUser, isAdminRole } from './services/users.js';
 import { homePage } from './views/public.js';
 
 const MAX_BODY = 20 * 1024;
@@ -19,12 +19,11 @@ const MAX_BODY = 20 * 1024;
 const SECURITY_HEADERS = {
   'Content-Security-Policy': [
     "default-src 'self'",
-    // 카카오(다음) 우편번호 서비스: 스크립트·검색 창(iframe)
-    "script-src 'self' https://t1.daumcdn.net https://t1.kakaocdn.net",
-    'frame-src https://postcode.map.daum.net https://postcode.map.kakao.com',
+    "script-src 'self'",
+    "frame-src 'none'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     'font-src https://fonts.gstatic.com',
-    "img-src 'self' data: https://t1.daumcdn.net https://t1.kakaocdn.net",
+    "img-src 'self' data:",
     "form-action 'self'",
     "frame-ancestors 'none'",
     "base-uri 'none'",
@@ -45,9 +44,11 @@ export function depsFromEnv(env) {
 function buildRouter() {
   const r = new Router();
   r.get('/healthz', (c) => respond(c, 'ok', { type: 'text/plain; charset=utf-8' }));
-  r.get('/', async (c) => render(c, homePage, groupByTheme(await listPrograms(c.db, { publicOnly: true })), 200, { session: !!c.user }));
+  // 첫 화면: 누구나 브랜드·짧은 영역 소개를 보고, 상세 프로그램 카드는 승인된 참여자와 관리자에게만 보여 준다.
+  r.get('/', async (c) => render(c, homePage,
+    canUseInternal(c.user) ? groupByTheme(await listPrograms(c.db, { publicOnly: true })) : null, 200, { session: !!c.user }));
   authRoutes(r);
-  noticeRoutes(r);
+  boardRoutes(r);
   meRoutes(r);
   adminAuthRoutes(r);
   adminRoutes(r);
@@ -131,12 +132,11 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
 
         if (c.method === 'POST' && !c.session.checkCsrf(typeof c.body._csrf === 'string' ? c.body._csrf : '')) {
           response = await deny(c, 403, '요청이 만료되었습니다. 페이지를 새로 열어 다시 시도해 주세요.');
-        } else if (c.user && c.user.pin_must_change && !['/account/pin', '/logout'].includes(c.path)) {
-          // 관리자가 초기화한 임시 PIN으로 로그인했으면 새 PIN을 정할 때까지 다른 화면을 막는다.
-          response = redirect(c, '/account/pin', 302);
-        } else if (isAdminRole(c.user) && (!c.user.password_hash || c.user.password_must_change)
-          && !['/admin/account', '/logout'].includes(c.path)) {
-          // 관리자는 아이디·비밀번호를 정할 때까지(또는 임시 비밀번호를 바꿀 때까지) 다른 화면을 막는다.
+        } else if (c.user && !c.user.password_hash && !['/account/password', '/admin/account', '/logout'].includes(c.path)) {
+          // 기존 PIN 계정: 새 비밀번호(관리자는 아이디·비밀번호)를 정할 때까지 다른 화면을 막는다.
+          response = redirect(c, afterLoginPath(c.user), 302);
+        } else if (isAdminRole(c.user) && (c.user.password_must_change || !c.user.login_id) && !['/admin/account', '/logout'].includes(c.path)) {
+          // 관리자: 관리자 아이디를 만들 때까지(또는 임시 비밀번호를 바꿀 때까지) 다른 화면을 막는다.
           response = redirect(c, '/admin/account', 302);
         } else if (!match) {
           response = await deny(c, 404);

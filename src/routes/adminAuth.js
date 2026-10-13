@@ -1,9 +1,9 @@
-import { hashPassword, loginIdProblem, normalizeLoginId, passwordProblem, temporaryPassword, verifyPassword } from '../lib/password.js';
+import { hashPassword, loginIdProblem, normalizeLoginId, passwordProblem, verifyPassword } from '../lib/password.js';
 import { verifyPin } from '../lib/pin.js';
-import { clearPhoneFailures, loginBlock, PHONE_LOCK_MINUTES, recordAttempt } from '../services/login.js';
-import { findAdminByLoginId, getUser, isAdminRole, resetAdminPassword, setAdminCredentials } from '../services/users.js';
+import { loginBlock, PHONE_LOCK_MINUTES, recordAttempt } from '../services/login.js';
+import { findAdminByLoginId, isAdminRole, setAdminCredentials } from '../services/users.js';
 import { adminAccountForm, adminLoginForm } from '../views/adminAuth.js';
-import { deny, field, intParam, redirect, render, requireManager, requireStaff } from './helpers.js';
+import { field, redirect, render, requireStaff } from './helpers.js';
 
 const LOGIN_FAILED = '아이디 또는 비밀번호가 맞지 않습니다.';
 // 로그인 시도 기록·잠금은 번호 대신 'id:<아이디>'를 키로 쓴다.
@@ -63,17 +63,5 @@ export function adminAuthRoutes(r) {
     await c.session.regenerate(user.id);
     await c.session.flash('ok', '아이디와 비밀번호가 저장되었습니다. 다음부터 관리자 로그인 화면에서 로그인해 주세요.');
     return redirect(c, '/admin');
-  });
-
-  // ── 전체 관리자: 다른 관리자의 비밀번호 초기화(임시 비밀번호) ──
-  r.post('/admin/users/:id/password-reset', requireManager, async (c) => {
-    const id = intParam(c.params.id);
-    const target = id && (await getUser(c.db, id));
-    if (!isAdminRole(target) || !target.login_id || target.id === c.user.id) return deny(c, 404);
-    const temp = temporaryPassword();
-    await resetAdminPassword(c.db, c.user.id, target.id, await hashPassword(c.cfg.sessionSecret, temp));
-    await clearPhoneFailures(c.db, attemptKey(target.login_id));
-    await c.session.flash('ok', `${target.name}(${target.login_id}) 임시 비밀번호: ${temp} — 본인에게 전달해 주세요. 첫 로그인 때 새 비밀번호로 바꾸게 됩니다.`);
-    return redirect(c, '/admin/staff');
   });
 }

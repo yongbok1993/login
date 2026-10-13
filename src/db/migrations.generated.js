@@ -96,5 +96,37 @@ export const MIGRATIONS = [
       "ALTER TABLE users ADD COLUMN password_updated_at TEXT",
       "CREATE UNIQUE INDEX users_login_id ON users(login_id)"
     ]
+  },
+  {
+    "name": "0011_applications_boards.sql",
+    "statements": [
+      "ALTER TABLE users ADD COLUMN account_status TEXT NOT NULL DEFAULT 'active' CHECK (account_status IN ('active', 'suspended'))",
+      "CREATE TRIGGER participants_cap_update BEFORE UPDATE ON users\nWHEN NEW.role = 'participant' AND NEW.is_selected = 1 AND NEW.account_status = 'active'\n  AND NOT (OLD.role = 'participant' AND OLD.is_selected = 1 AND OLD.account_status = 'active')\n  AND (SELECT COUNT(*) FROM users WHERE role = 'participant' AND is_selected = 1 AND account_status = 'active') >= 10\nBEGIN SELECT RAISE(ABORT, 'participant_cap'); END",
+      "CREATE TRIGGER participants_cap_insert BEFORE INSERT ON users\nWHEN NEW.role = 'participant' AND NEW.is_selected = 1 AND NEW.account_status = 'active'\n  AND (SELECT COUNT(*) FROM users WHERE role = 'participant' AND is_selected = 1 AND account_status = 'active') >= 10\nBEGIN SELECT RAISE(ABORT, 'participant_cap'); END",
+      "CREATE INDEX registrations_order ON registrations(registered_at, id)",
+      "CREATE TABLE password_resets (\n  id         INTEGER PRIMARY KEY,\n  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,\n  code_hash  TEXT    NOT NULL,\n  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,\n  created_at TEXT    NOT NULL,\n  expires_at TEXT    NOT NULL,\n  used_at    TEXT\n)",
+      "CREATE INDEX password_resets_user ON password_resets(user_id, created_at)",
+      "CREATE TABLE posts (\n  id          INTEGER PRIMARY KEY,\n  board       TEXT    NOT NULL CHECK (board IN ('notice', 'free', 'qna')),\n  title       TEXT    NOT NULL,\n  body        TEXT    NOT NULL DEFAULT '',\n  author_id   INTEGER REFERENCES users(id) ON DELETE SET NULL,\n  is_pinned   INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),\n  visibility  TEXT    NOT NULL DEFAULT 'members' CHECK (visibility IN ('members', 'private')),\n  answer_body TEXT,\n  answer_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,\n  answered_at TEXT,\n  created_at  TEXT    NOT NULL,\n  updated_at  TEXT    NOT NULL\n)",
+      "CREATE INDEX posts_board ON posts(board, is_pinned, created_at)",
+      "CREATE INDEX posts_author ON posts(author_id)",
+      "CREATE TABLE post_comments (\n  id         INTEGER PRIMARY KEY,\n  post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,\n  author_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,\n  body       TEXT    NOT NULL,\n  created_at TEXT    NOT NULL,\n  updated_at TEXT    NOT NULL\n)",
+      "CREATE INDEX post_comments_post ON post_comments(post_id, created_at)",
+      "INSERT INTO posts (board, title, body, author_id, is_pinned, visibility, created_at, updated_at)\nSELECT 'notice', title, body, created_by, is_pinned, 'members', created_at, updated_at FROM notices ORDER BY id",
+      "ALTER TABLE programs ADD COLUMN archived_at TEXT",
+      "UPDATE programs SET schedule_label = '2~11월 · 총 10회', sort_order = 0, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'link-cooking'",
+      "UPDATE programs SET schedule_label = '7월·9월 · 총 2회', sort_order = 1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'link-seasonal'",
+      "UPDATE programs SET schedule_label = '4월·10월 · 총 2회', sort_order = 2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'link-outing'",
+      "UPDATE programs SET name = '김장나눔활동', schedule_label = '11월 · 1회', sort_order = 3, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'link-kimjang'",
+      "UPDATE programs SET schedule_label = '2~12월 · 상시', sort_order = 10, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'open-casework'",
+      "UPDATE programs SET schedule_label = '3월·9월 · 총 2회', sort_order = 11, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'open-kit'",
+      "UPDATE programs SET name = '개별 심리상담', schedule_label = '2~11월 중 제공 · 예산상 1인 2회·총 20회', sort_order = 13, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'open-counseling'",
+      "UPDATE programs SET is_public = 0, archived_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'open-meetup'",
+      "UPDATE programs SET schedule_label = '2~6월 · 총 10회', sort_order = 20, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'grow-career'",
+      "UPDATE programs SET schedule_label = '7~10월 · 총 8회', sort_order = 21, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'grow-craft'",
+      "UPDATE programs SET name = '의사소통교육', schedule_label = '3~4월 · 총 4회', sort_order = 22, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'grow-communication'",
+      "UPDATE programs SET detail = '', schedule_label = '2월·9월 · 총 2회', sort_order = 30, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'in-case-conference'",
+      "UPDATE programs SET schedule_label = '10월 · 1회', sort_order = 31, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE code = 'in-campaign'",
+      "INSERT INTO programs (code, theme, name, detail, schedule_label, assign_mode, is_public, sort_order, created_at, updated_at) VALUES\n  ('link-selfhelp', 'L', '참여자 주도형 자조모임', '', '4·6·8·11월 · 총 4회', 'auto', 1, 4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n  ('open-group-counseling', 'O', '집단 심리상담', '', '2~11월 · 총 10회', 'manual', 1, 12, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),\n  ('in-evaluation', 'IN', '평가회', '', '12월 · 1회', 'internal', 1, 32, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))\nON CONFLICT(code) DO NOTHING"
+    ]
   }
 ];

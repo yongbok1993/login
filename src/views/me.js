@@ -1,16 +1,13 @@
 import { html } from '../lib/html.js';
-import { formatPhone } from '../lib/phone.js';
-import { formatDate, formatDateTime, formatTimeRange } from '../lib/time.js';
+import { formatDate, formatDateTime, formatShort, formatTimeRange } from '../lib/time.js';
 import { THEMES } from '../site.js';
-import { addressFields, POSTCODE_SCRIPTS } from './address.js';
-import { noticeItems } from './notices.js';
+import { applicationSummary, REVIEW_NOTICE, statusMessage } from './application.js';
 import { csrfField, errorSummary, field, layout, textInput, themeDot } from './layout.js';
 
-function page(ctx, title, inner, scripts = []) {
+function page(ctx, title, inner) {
   return layout(ctx, {
     title,
     area: 'me',
-    scripts,
     body: html`<section class="sec"><div class="wrap">${inner}</div></section>`,
   });
 }
@@ -37,17 +34,17 @@ function fmtNext(v) {
 
 function themeLabel(theme) {
   const t = THEMES[theme];
-  return theme === 'IN' ? '지역사회' : `${t.letter} ${t.ko}`;
+  return `${t.letter} ${t.short}`;
 }
 
 export function counselingCard(c, { heading = 'h2' } = {}) {
   const H = heading === 'h2' ? (x) => html`<h2 class="lb">${x}</h2>` : (x) => html`<h3 class="lb">${x}</h3>`;
   if (c.state !== 'available') {
-    return html`<div class="ph-card">${H('전문 심리상담')}<p><b>연동 확인 필요</b></p></div>`;
+    return html`<div class="ph-card">${H('개별 심리상담')}<p><b>연동 확인 필요</b></p></div>`;
   }
   return html`<div class="ph-card">
     ${c.isMock ? html`<span class="chip warn">개발용 모의 데이터</span>` : html`<span class="chip">꼬모 연동</span>`}
-    ${H('전문 심리상담')}
+    ${H('개별 심리상담')}
     <p><b>${c.total !== null ? `${c.completed} / ${c.total}회 완료` : `${c.completed}회 완료`}</b></p>
     ${c.progress !== null ? html`<progress class="bar" max="${c.total}" value="${c.completed}">${Math.round(c.progress * 100)}%</progress>` : ''}
     ${c.nextAt ? html`<p>다음 상담 ${fmtNext(c.nextAt)}</p>` : ''}
@@ -55,12 +52,34 @@ export function counselingCard(c, { heading = 'h2' } = {}) {
   </div>`;
 }
 
-export function notSelectedPage(ctx) {
-  return page(ctx, '나의 현황', html`
-    <h1 class="page-title">나의 현황</h1>
+/** 내 신청정보(모든 참여자). 승인 대기 중에는 이 화면만 이용할 수 있다. */
+export function applicationPage(ctx, { app, consents, consentDoc, canEdit, values, errors = {} }) {
+  const titles = Object.fromEntries((consentDoc?.items || []).map((i) => [i.key, i.title]));
+  return page(ctx, '내 신청정보', html`
+    <h1 class="page-title">내 신청정보</h1>
     <div class="card">
-      <p>참여자 전용 기능은 선정 후 이용할 수 있습니다.</p>
-      <p class="actions"><a class="btn ghost" href="/me/profile">내 정보</a></p>
+      ${applicationSummary(app)}
+      <p class="status-message">${statusMessage(app)}</p>
+      <p class="small muted">${REVIEW_NOTICE}</p>
+    </div>
+    ${canEdit ? html`${errorSummary(errors)}
+    <form method="post" action="/me/application" class="form card" novalidate>
+      ${csrfField(ctx)}
+      ${field({ id: 'name', label: '이름 수정', error: errors.name, hint: '이름을 바꿔도 신청 시각은 그대로입니다.',
+        input: (d) => textInput({ id: 'name', value: values ? values.name : app.name, autocomplete: 'name', maxlength: 40, required: true,
+          error: errors.name, describedBy: d }) })}
+      <button type="submit" class="btn">저장</button>
+    </form>` : ''}
+    <div class="card">
+      <h2 class="card-title">전화번호·비밀번호</h2>
+      <p>휴대전화 번호는 로그인 아이디라서 직접 바꿀 수 없습니다. 번호가 바뀌면 담당자에게 문의해 주세요. 본인 확인 후 바꿔 드립니다.</p>
+      <p class="actions"><a class="btn ghost" href="/account/password">비밀번호 변경</a></p>
+    </div>
+    <div class="card">
+      <h2 class="card-title">동의 내역</h2>
+      ${consents.length ? html`<ul class="plain">${consents.map((c) => html`
+        <li>${titles[c.purpose] || c.purpose} · ${c.agreed ? '동의' : '미동의'} · ${formatDateTime(c.agreed_at)}
+          ${c.withdrawn_at ? html` · 철회 ${formatDateTime(c.withdrawn_at)}` : ''}</li>`)}</ul>` : html`<p>없음</p>`}
     </div>`);
 }
 
@@ -101,11 +120,14 @@ export function statusPage(ctx, { next, upcoming, attended, counseling, pendingW
       </div>
     </div>
     ${notices.length ? html`<div class="card notices-card">
-      <h2 class="card-title">공지</h2>
-      ${noticeItems(notices)}
-      <p class="small"><a href="/notices">전체 보기</a></p>
+      <h2 class="card-title">공지사항</h2>
+      <ul class="post-list">${notices.map((n) => html`<li>
+        <a href="/board/notice/${n.id}">${n.is_pinned ? html`<span class="chip">중요</span> ` : ''}${n.title}</a>
+        <span class="small muted">${formatShort(n.created_at)}</span></li>`)}</ul>
+      <p class="small"><a href="/board/notice">전체 보기</a></p>
     </div>` : ''}
-    <p class="actions"><a class="btn" href="/me/programs">프로그램</a></p>`);
+    <p class="actions"><a class="btn" href="/me/programs">프로그램 안내</a><a class="btn ghost" href="/board">게시판</a>
+      <a class="btn ghost" href="/me/application">내 신청정보</a></p>`);
 }
 
 function sessionLine(s) {
@@ -132,37 +154,42 @@ export function programsPage(ctx, { groups, upcoming, growSessions }) {
     <h1 class="page-title">프로그램</h1>
     <div class="log-grid member">
       <section class="log-card l" aria-labelledby="t-l">
-        <h2 id="t-l">L 관계 <span class="en">LINK</span></h2>
-        <ul>${groups.L.map((p) => html`<li>${p.name}
-          ${mine(p.id).length ? html`<ul class="sessions">${mine(p.id).map((u) => html`<li>${sessionLine(u)}</li>`)}</ul>`
-            : html`<small>일정 미정</small>`}</li>`)}</ul>
+        <h2 id="t-l">L 관계 <span class="en">LIGHT</span></h2>
+        <ul>${groups.L.map((p) => html`<li>${p.name} <small>${p.schedule_label}</small>
+          ${mine(p.id).length ? html`<ul class="sessions">${mine(p.id).map((u) => html`<li>${sessionLine(u)}</li>`)}</ul>` : ''}</li>`)}</ul>
         <span class="mode">전체 자동 참여</span>
       </section>
 
       <section class="log-card o" aria-labelledby="t-o">
         <h2 id="t-o">O 마음 <span class="en">OPEN</span></h2>
         <ul>${groups.O.map((p) => p.assign_mode === 'external'
-          ? html`<li><a class="item-link" href="/me/open/counseling">${p.name}</a></li>`
-          : html`<li>${p.name}
+          ? html`<li><a class="item-link" href="/me/open/counseling">${p.name}</a> <small>${p.schedule_label}</small></li>`
+          : html`<li>${p.name} <small>${p.schedule_label}</small>
             ${mine(p.id).length ? html`<ul class="sessions">${mine(p.id).map((u) => html`<li>${sessionLine(u)}</li>`)}</ul>` : ''}</li>`)}
         </ul>
       </section>
 
       <section class="log-card g" aria-labelledby="t-g">
         <h2 id="t-g">G 성장 <span class="en">GROW</span></h2>
-        <ul>${groups.G.map((p) => html`<li>${p.name}${p.detail ? html` <small>${p.detail}</small>` : ''}
+        <ul>${groups.G.map((p) => html`<li>${p.name} <small>${p.detail ? html`${p.detail}<br>` : ''}${p.schedule_label}</small>
           ${growBy(p.id).length ? html`<ul class="sessions">${growBy(p.id).map((s) => html`
             <li class="session-row"><span>${sessionLine(s)}</span><span class="row-action">${growAction(ctx, s)}</span></li>`)}</ul>`
-            : html`<small>일정 미정</small>`}</li>`)}</ul>
+            : ''}</li>`)}</ul>
         <span class="mode">희망 활동 직접 선택</span>
+      </section>
+
+      <section class="log-card in" aria-labelledby="t-in">
+        <h2 id="t-in">IN 지역사회 네트워크 <span class="en">NETWORK</span></h2>
+        <ul>${groups.IN.map((p) => html`<li>${p.name} <small>${p.schedule_label}</small>
+          ${mine(p.id).length ? html`<ul class="sessions">${mine(p.id).map((u) => html`<li>${sessionLine(u)}</li>`)}</ul>` : ''}</li>`)}</ul>
       </section>
     </div>`);
 }
 
 export function counselingPage(ctx, counseling) {
-  return page(ctx, '전문 심리상담', html`
+  return page(ctx, '개별 심리상담', html`
     <p class="crumb"><a href="/me/programs">프로그램</a> › O 마음</p>
-    <h1 class="page-title">전문 심리상담</h1>
+    <h1 class="page-title">개별 심리상담</h1>
     <div class="status-grid one">
       ${counselingCard(counseling)}
     </div>
@@ -216,36 +243,4 @@ export function growDonePage(ctx, s) {
       <p>관리자가 선정하면 나의 현황 일정에 표시됩니다. 선정 결과는 프로그램 화면에서 확인할 수 있습니다.</p>
       <p class="actions"><a class="btn" href="/me">나의 현황</a><a class="btn ghost" href="/me/programs">프로그램</a></p>
     </div>`);
-}
-
-export function profilePage(ctx, { user, consents, consentDoc, values, errors = {} }) {
-  const titles = Object.fromEntries((consentDoc?.items || []).map((i) => [i.key, i.title]));
-  const v = values || user;
-  return page(ctx, '내 정보', html`
-    <h1 class="page-title">내 정보</h1>
-    ${errorSummary(errors)}
-    <form method="post" action="/me/profile" class="form card" novalidate>
-      ${csrfField(ctx)}
-      ${field({ id: 'name', label: '이름', error: errors.name,
-        input: (d) => textInput({ id: 'name', value: v.name, autocomplete: 'name', maxlength: 40, required: true,
-          error: errors.name, describedBy: d }) })}
-      ${addressFields(v, errors)}
-      ${field({ id: 'birth_date', label: '생년월일', error: errors.birth_date, hint: '예: 19700101',
-        input: (d) => textInput({ id: 'birth_date', value: v.birth_date_input ?? (v.birth_date || '').replace(/-/g, ''),
-          autocomplete: 'bday', inputmode: 'numeric', maxlength: 10, required: true, error: errors.birth_date, describedBy: d }) })}
-      <button type="submit" class="btn">저장</button>
-    </form>
-
-    <div class="card">
-      <h2 class="card-title">연락처</h2>
-      <p>${formatPhone(user.phone)}</p>
-      <p class="actions"><a class="btn ghost" href="/me/phone">번호 변경</a><a class="btn ghost" href="/account/pin">PIN 변경</a></p>
-    </div>
-
-    <div class="card">
-      <h2 class="card-title">동의 내역</h2>
-      ${consents.length ? html`<ul class="plain">${consents.map((c) => html`
-        <li>${titles[c.purpose] || c.purpose} · ${c.agreed ? '동의' : '미동의'} · ${formatDateTime(c.agreed_at)}
-          ${c.withdrawn_at ? html` · 철회 ${formatDateTime(c.withdrawn_at)}` : ''}</li>`)}</ul>` : html`<p>없음</p>`}
-    </div>`, POSTCODE_SCRIPTS);
 }

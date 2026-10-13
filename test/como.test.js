@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createMockAdapter } from '../src/como/adapters.js';
 import { checkLink, counselingView, syncStatus } from '../src/como/mapping.js';
 import { getUser } from '../src/services/users.js';
-import { addManager, addParticipant, startApp, TEST_PIN } from './helpers.js';
+import { addManager, addParticipant, startApp } from './helpers.js';
 
 function mock(accounts) {
   return createMockAdapter({ accounts });
@@ -83,8 +83,7 @@ test('이름 불일치·이미 다른 사용자와 연결된 꼬모 계정은 �
   assert.equal((await counselingView(app.db, como2, await getUser(app.db, u2))).state, 'unavailable');
 });
 
-test('전화번호 변경 시 연결 해제·현황 삭제, 새 번호는 관리자 확인 전까지 조회 안 함, 다른 세션 종료', async (t) => {
-  // 새 번호(01073000009)에도 꼬모 계정이 있지만, 확인 전에는 조회·연결하지 않아야 한다.
+test('전화번호 변경(담당자 본인 확인 후): 연결 해제·현황 삭제·그 사람의 로그인 종료, 새 번호로 다시 매핑', async (t) => {
   const como = mock([
     { externalId: 'p1', phone: '01073000001', completed: 4, total: 6 },
     { externalId: 'p9', phone: '01073000009', completed: 9, total: 9 },
@@ -92,34 +91,26 @@ test('전화번호 변경 시 연결 해제·현황 삭제, 새 번호는 관리
   const app = await startApp({ como });
   t.after(app.close);
   const uid = await addParticipant(app.db, { phone: '01073000001', selected: true });
-  const other = app.client();
-  await other.login('01073000001');
   const c = app.client();
   await c.login('01073000001');
   assert.match((await c.get('/me')).text, /4 \/ 6회 완료/);
+  assert.equal((await c.get('/me/phone')).status, 404, '참여자 본인은 번호를 바꿀 수 없음');
 
-  await c.get('/me/phone');
-  let r = await c.post('/me/phone', { phone: '010-7300-0009', pin: '000001' });
-  assert.match(r.text, /PIN이 맞지 않습니다/);
-  r = await c.post('/me/phone', { phone: '010-7300-0009', pin: TEST_PIN });
-  assert.equal(r.location, '/me/profile');
-  const u = await getUser(app.db, uid);
-  assert.equal(u.phone, '01073000009');
-  assert.equal(u.phone_confirmed_at, null);
-  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM como_status')).n, 0);
-  r = await c.get('/me');
-  assert.match(r.text, /연동 확인 필요/);
-  assert.ok(!/회 완료/.test(r.text), '확인 전 번호로 남의 상담 현황을 보여 주지 않음');
-  assert.equal((await app.sql.get('SELECT status FROM como_links')).status, 'needs_recheck');
-  assert.equal((await other.get('/me')).location, '/login');
-
-  // 관리자가 연락처를 확인하면 그때 매핑한다.
   await addManager(app.db);
   const m = app.client();
   await m.adminLogin();
-  await m.post(`/admin/participants/${uid}/confirm-phone`);
-  assert.equal((await app.sql.get('SELECT status FROM como_links')).status, 'linked');
-  assert.match((await c.get('/me')).text, /9 \/ 9회 완료/);
+  await m.post(`/admin/participants/${uid}/phone`, { phone: '010-7300-0009' });
+  const u = await getUser(app.db, uid);
+  assert.equal(u.phone, '01073000009');
+  assert.ok(u.phone_confirmed_at, '담당자 확인으로 기록');
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM como_status')).n, 0);
+  assert.equal((await app.sql.get('SELECT status FROM como_links')).status, 'needs_recheck');
+  assert.equal((await c.get('/me')).location, '/login', '기존 로그인 종료');
+
+  const again = app.client();
+  await again.login('01073000009');
+  assert.match((await again.get('/me')).text, /9 \/ 9회 완료/);
+  assert.equal((await app.sql.get('SELECT phone_at_link FROM como_links')).phone_at_link, '01073000009');
 });
 
 test('등록만 하고 확인되지 않은 번호는 꼬모 계정이 있어도 연결하지 않는다', async (t) => {
