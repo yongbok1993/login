@@ -1,7 +1,7 @@
 import { html } from '../lib/html.js';
 import { formatShort } from '../lib/time.js';
 import {
-  authorLabel, BOARDS, canComment, canDeleteComment, canDeletePost, canEditComment, canEditPost, canWrite, VISIBILITY,
+  authorLabel, BOARDS, canComment, canDeleteComment, canDeletePost, canEditComment, canEditPost, canWrite, isStaffAuthor, VISIBILITY,
 } from '../services/board.js';
 import { isAdminRole } from '../services/users.js';
 import { csrfField, errorSummary, field, layout, textInput } from './layout.js';
@@ -23,7 +23,8 @@ export function boardTabs(ctx, current) {
 function postBadges(p) {
   return html`${p.board === 'notice' && p.is_pinned ? html`<span class="chip">중요</span> ` : ''}${p.board === 'qna'
     ? html`<span class="chip ${p.visibility === 'private' ? 'muted-chip' : ''}">${VISIBILITY[p.visibility]}</span>
-      <span class="chip ${p.answered_at ? '' : 'warn'}">${p.answered_at ? '답변 완료' : '답변 대기'}</span> ` : ''}`;
+      ${p.staff_answers ? html`<span class="chip staff">담당자 답변</span>` : p.comment_count ? html`<span class="chip">답변 ${p.comment_count}</span>`
+        : html`<span class="chip warn">답변 대기</span>`} ` : ''}`;
 }
 
 function pager(board, { page, pages, q }) {
@@ -45,7 +46,7 @@ export function listPage(ctx, board, { rows, total, page: current, pages, q }) {
       <h2 class="card-title">${b.title} <span class="small muted">${total}건</span></h2>
       ${canWrite(ctx.user, board) ? html`<a class="btn" href="/board/${board}/new">${b.write}</a>` : ''}
     </div>
-    ${board === 'qna' ? html`<p class="small muted">'담당자만 보기' 질문과 답변은 작성자와 담당자만 볼 수 있습니다.</p>` : ''}
+    ${board === 'qna' ? html`<p class="small muted">'담당자에게 비공개' 질문과 그 답변은 작성자와 담당자만 볼 수 있습니다.</p>` : ''}
     <form method="get" action="/board/${board}" class="search" role="search">
       <label for="q" class="visually-hidden">검색어</label>
       <input id="q" name="q" type="search" value="${q}" maxlength="50" placeholder="제목·내용 검색">
@@ -61,8 +62,10 @@ export function listPage(ctx, board, { rows, total, page: current, pages, q }) {
 }
 
 function commentBlock(ctx, post, c) {
-  return html`<li class="comment">
-    <p class="small muted">${authorLabel(c)} · ${formatShort(c.created_at)}${c.updated_at !== c.created_at ? ' (수정됨)' : ''}</p>
+  const staff = isStaffAuthor(c);
+  return html`<li class="comment${staff ? ' by-staff' : ''}">
+    <p class="small muted">${staff ? html`<span class="chip staff">${post.board === 'qna' ? '담당자 답변' : '담당자'}</span> ` : ''}${authorLabel(c)}
+      · ${formatShort(c.created_at)}${c.updated_at !== c.created_at ? ' (수정됨)' : ''}</p>
     <div class="post-body">${c.body}</div>
     <div class="row-actions">
       ${canEditComment(ctx.user, c) ? html`<a class="btn small ghost" href="/board/${post.board}/${post.id}/comments/${c.id}/edit">수정</a>` : ''}
@@ -71,14 +74,15 @@ function commentBlock(ctx, post, c) {
   </li>`;
 }
 
-export function detailPage(ctx, post, { comments = [], commentError, answerError } = {}) {
-  const admin = isAdminRole(ctx.user);
+export function detailPage(ctx, post, { comments = [], commentError } = {}) {
+  const qna = post.board === 'qna';
+  const noun = qna ? '답변' : '댓글';
   return page(ctx, post.title, html`
     <p class="crumb"><a href="/board/${post.board}">${BOARDS[post.board].title}</a></p>
     <article class="card post">
       <p>${postBadges(post)}</p>
       <h1 class="page-title">${post.title}</h1>
-      <p class="small muted">${authorLabel(post)} · ${formatShort(post.created_at)}${post.updated_at !== post.created_at
+      <p class="small muted">${isStaffAuthor(post) ? html`<span class="chip staff">담당자</span> ` : ''}${authorLabel(post)} · ${formatShort(post.created_at)}${post.updated_at !== post.created_at
         ? html` · 수정 ${formatShort(post.updated_at)}` : ''}</p>
       <div class="post-body">${post.body}</div>
       <div class="row-actions">
@@ -87,30 +91,16 @@ export function detailPage(ctx, post, { comments = [], commentError, answerError
       </div>
     </article>
 
-    ${post.board === 'qna' ? html`<section class="card answer" aria-labelledby="answer-title">
-      <h2 class="card-title" id="answer-title">답변</h2>
-      ${post.answer_body ? html`<p class="small muted">담당자 · ${formatShort(post.answered_at)}</p>
-        <div class="post-body">${post.answer_body}</div>` : html`<p class="muted">아직 답변이 없습니다.</p>`}
-      ${admin ? html`<form method="post" action="/board/qna/${post.id}/answer" class="form" novalidate>
-        ${csrfField(ctx)}
-        ${field({ id: 'answer', label: post.answer_body ? '답변 수정' : '답변 쓰기', error: answerError,
-          input: (d) => html`<textarea id="answer" name="answer" rows="6" maxlength="10000" required
-            ${answerError ? html`aria-invalid="true"` : ''} ${d ? html`aria-describedby="${d}"` : ''}>${post.answer_body || ''}</textarea>` })}
-        <div class="actions"><button type="submit" class="btn">답변 저장</button></div>
-      </form>
-      ${post.answer_body ? html`<form method="post" action="/board/qna/${post.id}/answer/delete" class="inline-form">
-        ${csrfField(ctx)}<button type="submit" class="btn small ghost">답변 삭제</button></form>` : ''}` : ''}
-    </section>` : ''}
-
     ${canComment(ctx.user, post) ? html`<section class="card comments" aria-labelledby="comments-title">
-      <h2 class="card-title" id="comments-title">댓글 ${comments.length}</h2>
-      ${comments.length ? html`<ul class="comment-list">${comments.map((c) => commentBlock(ctx, post, c))}</ul>` : ''}
+      <h2 class="card-title" id="comments-title">${noun} ${comments.length}</h2>
+      ${comments.length ? html`<ul class="comment-list">${comments.map((c) => commentBlock(ctx, post, c))}</ul>`
+        : qna ? html`<p class="muted">아직 답변이 없습니다.</p>` : ''}
       <form method="post" action="/board/${post.board}/${post.id}/comments" class="form" novalidate>
         ${csrfField(ctx)}
-        ${field({ id: 'comment', label: '댓글 쓰기', error: commentError,
-          input: (d) => html`<textarea id="comment" name="body" rows="3" maxlength="2000" required
+        ${field({ id: 'comment', label: `${noun} 쓰기`, error: commentError,
+          input: (d) => html`<textarea id="comment" name="body" rows="${qna ? 5 : 3}" maxlength="${qna ? 10000 : 2000}" required
             ${commentError ? html`aria-invalid="true"` : ''} ${d ? html`aria-describedby="${d}"` : ''}></textarea>` })}
-        <div class="actions"><button type="submit" class="btn">댓글 등록</button></div>
+        <div class="actions"><button type="submit" class="btn">${noun} 등록</button></div>
       </form>
     </section>` : ''}
     <p class="actions"><a class="btn ghost" href="/board/${post.board}">목록</a></p>`);
@@ -135,7 +125,7 @@ export function formPage(ctx, board, { post, values = {}, errors = {} }) {
         <legend>공개 범위</legend>
         ${Object.entries(VISIBILITY).map(([k, label]) => html`<label class="check">
           <input type="radio" name="visibility" value="${k}" ${v.visibility === k ? html`checked` : ''}><span>${label}</span></label>`)}
-        <p class="hint">'담당자만 보기'는 나와 담당자만 볼 수 있습니다. '참여자에게 공개'는 승인된 참여자 모두가 볼 수 있습니다.</p>
+        <p class="hint">'담당자에게 비공개'는 나와 담당자만 보고 답변할 수 있습니다. '로그인 사용자에게 공개'는 로그인한 신청자와 담당자 모두 보고 답변할 수 있습니다.</p>
       </fieldset>` : ''}
       ${board === 'notice' ? html`<label class="check"><input type="checkbox" name="is_pinned" value="1" ${v.is_pinned ? html`checked` : ''}>
         <span>중요 공지(목록 맨 위에 고정)</span></label>` : ''}
@@ -161,13 +151,14 @@ export function deleteConfirmPage(ctx, { title, description, action, back }) {
 }
 
 export function commentEditPage(ctx, post, comment, { value, error } = {}) {
-  return page(ctx, '댓글 수정', html`
+  const noun = post.board === 'qna' ? '답변' : '댓글';
+  return page(ctx, `${noun} 수정`, html`
     <p class="crumb"><a href="/board/${post.board}/${post.id}">${post.title}</a></p>
-    <h1 class="page-title">댓글 수정</h1>
+    <h1 class="page-title">${noun} 수정</h1>
     <form method="post" action="/board/${post.board}/${post.id}/comments/${comment.id}/edit" class="form card" novalidate>
       ${csrfField(ctx)}
-      ${field({ id: 'comment', label: '댓글', error,
-        input: (d) => html`<textarea id="comment" name="body" rows="4" maxlength="2000" required
+      ${field({ id: 'comment', label: noun, error,
+        input: (d) => html`<textarea id="comment" name="body" rows="4" maxlength="${post.board === 'qna' ? 10000 : 2000}" required
           ${error ? html`aria-invalid="true"` : ''} ${d ? html`aria-describedby="${d}"` : ''}>${value ?? comment.body}</textarea>` })}
       <div class="actions"><button type="submit" class="btn">저장</button>
         <a class="btn ghost" href="/board/${post.board}/${post.id}">취소</a></div>

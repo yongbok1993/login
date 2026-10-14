@@ -9,59 +9,80 @@ const BANNED = [
   '원하는 활동을 직접 골라 체험하고', '상태가 아니라 내 일정이 보입니다',
 ];
 
-test('첫 화면: 비로그인은 LOG人·L·O·G·IN 짧은 소개·신청하기만, 상세 프로그램 카드는 승인 참여자·관리자에게만', async (t) => {
+const IN_MARK = '<span class="mark-in"><span class="mark-i">i</span><span class="mark-n">N</span></span>';
+
+test('첫 화면: 비로그인은 LOGIN : 人 브랜드·사업 소개·네 영역 설명·참여 안내·신청서·연락처만, 상세 프로그램은 승인 참여자·담당자에게만', async (t) => {
   const app = await startApp();
   t.after(app.close);
   const r = await app.client().get('/');
   assert.equal(r.status, 200);
-  assert.match(r.text, /<h1 class="wordmark">LOG<em>人<\/em><\/h1>/);
-  assert.match(r.text, /<title>LOG人<\/title>/);
-  assert.match(r.text, /property="og:site_name" content="LOG人"/);
-  assert.match(r.text, /LOGIN : 人/);
-  for (const line of ['L 관계 — Light', 'O 마음 — Open', 'G 성장 — Grow', 'IN 지역사회 — Network']) assert.ok(r.text.includes(line), line);
-  assert.ok(r.text.indexOf('L 관계 — Light') < r.text.indexOf('O 마음') && r.text.indexOf('G 성장') < r.text.indexOf('IN 지역사회'));
-  assert.ok(r.text.includes('신청하기') && r.text.includes('href="/login"'));
-  assert.ok(r.text.includes('신청 순서대로 검토하며 참여 확정은 담당자 확인 후 안내합니다.'));
-  for (const bad of ['요리교실', '통합사례회의', '개별 심리상담', 'href="/board', 'href="/notices', '로그人', 'Link', 'LINK',
-    'cco-mho', '상담신청하기', '<img', 'cloudflareinsights', ...BANNED]) {
+  assert.match(r.text, /<h1 class="wordmark">LOGIN<span class="colon"> : <\/span><em>人<\/em><\/h1>/);
+  assert.match(r.text, /<title>LOGIN : 人<\/title>/);
+  assert.match(r.text, /property="og:site_name" content="LOGIN : 人"/);
+  assert.match(r.text, /<a class="brand" href="\/" aria-label="LOGIN : 人 처음으로">/);
+  assert.match(r.text, /<div class="brand" role="img" aria-label="LOGIN : 人">/, '하단 로고');
+  assert.match(r.text, />로그인<\/a>/, '기능 버튼 로그인은 그대로');
+  assert.match(r.text, /북한이탈주민의 정서적 안정 및 사회통합을 위한 지역사회 관계망 강화사업입니다/);
+  const areas = [
+    ['L : Light', '정서 지원', '마음을 돌보고 필요한 도움과 연결하며 안정적인 일상을 지원합니다.'],
+    ['O : Organization', '관계망 형성', '함께 만나고 활동하며 서로를 지지하는 관계를 만들어 갑니다.'],
+    ['G : Grow', '나의 성장', '관심과 욕구에 맞는 경험과 배움을 통해 새로운 가능성을 탐색합니다.'],
+    [`${IN_MARK} : Network`, '지역사회 네트워크', '복지관과 지역사회 기관·자원을 연결하여 필요한 도움과 지속적인 관계를 이어갑니다.'],
+  ];
+  const sec = r.text.slice(r.text.indexOf('id="areas"'), r.text.indexOf('id="guide"'));
+  let last = -1;
+  for (const [name, ko, desc] of areas) {
+    const i = sec.indexOf(`<span class="area-name">${name}</span><span class="area-ko">${ko}</span>`);
+    assert.ok(i > last, `${name} 순서·제목 구조`);
+    assert.ok(sec.includes(desc), desc);
+    last = i;
+  }
+  assert.ok(r.text.includes(`${IN_MARK} : Network — 지역사회 네트워크`), '상단 영역 소개에 iN');
+  assert.ok(r.text.includes(`<b>${IN_MARK}</b><span>지역사회<br>네트워크</span>`), '장식 도장에 iN');
+  for (const x of ['참여 대상', '신청·선정 절차', '우선순위에 따라 검토하고, 같은 순위에서는 먼저 신청한 순서를 따릅니다', '자동으로 확정되지 않습니다',
+    'href="/forms"', '031-334-9966', 'href="/register"']) assert.ok(r.text.includes(x), x);
+  for (const bad of ['요리교실', '통합사례회의', '전문 심리상담', '개별 사례관리', '회차', 'href="/board', 'LOG人', '로그人', 'LOGIN : IN',
+    'iNetwork', '>IN<', 'Organization</span><span class="area-ko">관계</span>', 'cco-mho', '<img', ...BANNED]) {
     assert.ok(!r.text.includes(bad), `비로그인 첫 화면에 "${bad}" 노출`);
   }
   assert.ok(!/<script/.test(r.text), '첫 화면은 스크립트를 불러오지 않음');
   assert.match(r.headers.get('content-security-policy'), /script-src 'self';/);
-  assert.ok(!r.headers.get('content-security-policy').includes('daumcdn'));
 
   // 승인 대기 신청자에게도 상세 카드 없음
   await addParticipant(app.db, { phone: '01012340001' });
   const pending = app.client();
   await pending.login('01012340001');
-  assert.ok(!(await pending.get('/')).text.includes('요리교실'));
+  const ph = (await pending.get('/')).text;
+  assert.ok(!ph.includes('요리교실') && !ph.includes('id="programs"'));
+  assert.equal((await pending.get('/me/programs')).status, 403);
 
-  // 승인된 참여자: 네 영역 카드와 최종 사업계획 일정
+  // 승인된 참여자: 네 영역 상세 카드(최신 2차 수정본)
   await addParticipant(app.db, { phone: '01012340002', selected: true });
   const p = app.client();
   await p.login('01012340002');
   const home = (await p.get('/')).text;
-  const cards = home.slice(home.indexOf('<section id="programs"'));
+  const cards = home.slice(home.indexOf('<section id="programs"'), home.indexOf('id="guide"'));
   const order = ['log-card l', 'log-card o', 'log-card g', 'log-card in'].map((k) => cards.indexOf(k));
-  assert.ok(order.every((v, i) => v > 0 && (i === 0 || v > order[i - 1])), 'L·O·G·IN 순서');
-  for (const [en, title] of [['LIGHT', '관계'], ['OPEN', '마음'], ['GROW', '성장'], ['NETWORK', '지역사회 네트워크']]) {
-    assert.match(cards, new RegExp(`<h3>${title}</h3><span class="en">${en}</span>`));
-  }
-  for (const item of ['요리교실 <small>2~11월 · 총 10회', '절기행사 <small>7월·9월 · 총 2회', '나들이 <small>4월·10월 · 총 2회',
-    '김장나눔활동 <small>11월 · 1회', '참여자 주도형 자조모임 <small>4·6·8·11월 · 총 4회', '개별 사례관리 <small>2~12월 · 상시',
-    '정서지원 키트 <small>3월·9월 · 총 2회', '집단 심리상담 <small>2~11월 · 총 10회', '개별 심리상담 <small>2~11월 중 제공 · 예산상 1인 2회·총 20회',
-    '직업·적성 체험 <small>베이킹·쿠킹·바리스타 등<br>2~6월 · 총 10회', '공예 체험 <small>7~10월 · 총 8회', '의사소통교육 <small>3~4월 · 총 4회',
-    '통합사례회의 <small>2월·9월 · 총 2회', '지역사회 인식개선 캠페인 <small>10월 · 1회', '평가회 <small>12월 · 1회']) {
-    assert.ok(cards.includes(item), item);
-  }
-  for (const bad of ['만남 및 교류활동', '월 1회', '6월·11월', '사업 운영 10회', '사업 운영 20회', 'cco-mho', '상담신청하기']) {
+  assert.ok(order.every((v, i) => v > 0 && (i === 0 || v > order[i - 1])), 'L·O·G·iN 순서');
+  const part = (k, next) => cards.slice(cards.indexOf(`log-card ${k}`), next ? cards.indexOf(`log-card ${next}`) : undefined);
+  const L = part('l', 'o'); const O = part('o', 'g'); const G = part('g', 'in'); const N = part('in');
+  for (const x of ['개별 사례관리 <small>2~12월 · 상시</small>', '상담·모니터링을 통해 욕구를 확인하고 필요한 서비스와 자원을 연계합니다. 필요한 물품으로 구성한 키트 지원을 포함합니다.',
+    '전문 심리상담 <small>4~7월 · 총 8회·월 2회</small>', '전문기관과 연계하여 일대일 상담을 진행합니다.']) assert.ok(L.includes(x), `L: ${x}`);
+  for (const x of ['요리교실 <small>2~11월 · 총 10회', '절기행사 <small>7월·9월 · 총 2회', '나들이 <small>4월·10월 · 총 2회',
+    '김장나눔활동 <small>11월 · 1회', '참여자 주도형 자조모임 <small>4·6·8·10월 · 총 4회']) assert.ok(O.includes(x), `O: ${x}`);
+  for (const x of ['직업·적성 체험 <small>2~6월 · 총 10회', '맞춤형 체험 활동 <small>7~10월 · 총 8회',
+    '참여자 의견을 수렴하여 활동을 선정합니다.', '의사소통교육 <small>3~4월 · 총 4회']) assert.ok(G.includes(x), `G: ${x}`);
+  for (const x of ['통합사례회의 <small>2월·9월 · 총 2회', '필요한 서비스와 지역자원을 연결합니다.', '평가회 <small>12월 · 1회',
+    '사업 운영 결과와 참여 경험을 함께 돌아봅니다.']) assert.ok(N.includes(x), `iN: ${x}`);
+  for (const bad of ['집단 심리상담', '정서지원 키트', '만남 및 교류활동', '지역사회 인식개선 캠페인', '공예 체험', '도자기', '목공', '베이킹',
+    '월 1회', '6월·11월', '4·6·8·11월', '2~11월 중 제공', '사업 운영 10회', 'Light</span><span class="area-ko">관계', 'Open', 'LINK']) {
     assert.ok(!home.includes(bad), `"${bad}" 남아 있음`);
   }
   for (const path of ['/me', '/me/programs']) {
     const x = (await p.get(path)).text;
-    for (const bad of ['만남 및 교류활동', '6월·11월', 'LINK', '로그人']) assert.ok(!x.includes(bad), `${path}: ${bad}`);
+    for (const bad of ['만남 및 교류활동', '집단 심리상담', '공예 체험', '인식개선', 'LOG人']) assert.ok(!x.includes(bad), `${path}: ${bad}`);
   }
-  assert.match((await p.get('/me/programs')).text, /IN 지역사회 네트워크 <span class="en">NETWORK<\/span>/);
+  assert.ok((await p.get('/me/programs')).text.includes(`<span class="area-name">${IN_MARK} : Network</span><span class="area-ko">지역사회 네트워크</span>`));
 });
 
 const REG = { name: '홍길동', phone: '010-1111 2222', password: 'hello2026', password_confirm: 'hello2026', consent: 'privacy' };
@@ -242,8 +263,8 @@ test('Link: 선정 시 전체 자동 배정, 신청 버튼 없음, 재실행·�
   await c.login('01040000001');
   const r = await c.get('/me/programs');
   assert.equal(r.status, 200);
-  const linkSection = r.text.slice(r.text.indexOf('id="t-l"'), r.text.indexOf('id="t-o"'));
-  assert.ok(linkSection.includes('전체 자동 참여'));
+  const linkSection = r.text.slice(r.text.indexOf('id="t-o"'), r.text.indexOf('id="t-g"'));
+  assert.ok(linkSection.includes('요리교실'));
   assert.ok(!/신청|type="checkbox"/.test(linkSection), 'Link 영역에 신청 요소가 없어야 함');
   // 자동 배정은 '참여한 프로그램'에 들어가지 않는다
   const me = await c.get('/me');
@@ -274,7 +295,7 @@ test('Grow: 희망 신청(개인정보 재입력 없음) → 관리자 선정 �
   assert.equal((await c.post(`/me/grow/${sid}`)).status, 409, '중복 신청 차단');
   assert.match((await c.get('/me/programs')).text, /선정 대기/);
   let me = await c.get('/me');
-  assert.ok(!me.text.slice(me.text.indexOf('참여할 프로그램'), me.text.indexOf('개별 심리상담')).includes('직업·적성 체험 1회차'), '선정 전에는 일정에 없음');
+  assert.ok(!me.text.slice(me.text.indexOf('참여할 프로그램'), me.text.indexOf('전문 심리상담')).includes('직업·적성 체험 1회차'), '선정 전에는 일정에 없음');
   assert.match(me.text, /희망 신청 1건 선정 대기/);
 
   // 정원 1이어도 희망 신청은 받는다(선정 인원 기준)
@@ -302,7 +323,7 @@ test('Grow: 희망 신청(개인정보 재입력 없음) → 관리자 선정 �
   assert.deepEqual(sel.map((x) => x.selection), ['selected', 'not_selected']);
 
   me = await c.get('/me');
-  assert.match(me.text.slice(me.text.indexOf('참여할 프로그램'), me.text.indexOf('개별 심리상담')), /직업·적성 체험 1회차/);
+  assert.match(me.text.slice(me.text.indexOf('참여할 프로그램'), me.text.indexOf('전문 심리상담')), /직업·적성 체험 1회차/);
   assert.match((await c.get('/me/programs')).text, /<span class="chip">선정<\/span>/);
   assert.match((await c2.get('/me/programs')).text, /미선정/);
   // 정원이 찬 뒤 새 희망 신청은 정원 마감
@@ -458,7 +479,7 @@ test('나의 현황: 네 영역, 미정 값은 채우지 않음, 출석 기록�
   const c = app.client();
   await c.login('01080000001');
   const r = await c.get('/me');
-  for (const h of ['지금 해야 할 것', '참여할 프로그램', '참여한 프로그램', '개별 심리상담']) assert.ok(r.text.includes(h), h);
+  for (const h of ['지금 해야 할 것', '참여할 프로그램', '참여한 프로그램', '전문 심리상담']) assert.ok(r.text.includes(h), h);
   const now = r.text.slice(r.text.indexOf('지금 해야 할 것'), r.text.indexOf('참여할 프로그램'));
   assert.match(now, /절기행사/);
   assert.match(now, /2099년 7월 1일/);
@@ -681,7 +702,7 @@ test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async 
   const text = await r.text();
   assert.equal(r.status, 200);
   assert.ok(!text.includes('개발 환경'));
-  assert.ok(text.includes('LOG<em>人</em>'));
+  assert.ok(text.includes('LOGIN<span class="colon"> : </span><em>人</em>'));
   assert.equal(r.headers.get('set-cookie'), null, '공개 홈은 세션을 만들지 않음');
 
   r = await fetchPage('/register');
@@ -695,7 +716,7 @@ test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async 
   });
   assert.equal(r.status, 303);
   assert.equal(r.headers.get('location'), '/register/done');
-  assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '2026-10-13');
+  assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '2026-10-14');
 });
 
 test('SESSION_SECRET 없음·짧음: 비밀키를 DB에 자동 생성해 등록·로그인 동작, 이후 요청도 같은 키 사용', async (t) => {
@@ -755,63 +776,106 @@ test('기본 개인정보 수집·이용 동의문 표시, 동의 버전 기록,
   const { loadConsent } = await import('../src/config.js');
   const app = await startApp({ cfg: { consent: undefined } });
   t.after(app.close);
-  assert.equal(loadConsent(app.cfg).version, '2026-10-13');
+  assert.equal(loadConsent(app.cfg).version, '2026-10-14');
   const c = app.client();
   let r = await c.get('/register');
   for (const part of ['수집·이용 목적', '신청정보(필수): 이름, 휴대전화 번호', '계정정보(필수): 비밀번호', '담당자도 볼 수 없습니다',
-    '접수정보(자동 생성): 신청 시각', '이용정보', '게시판', '접속기록', '보유·이용 기간', '동의를 거부할 권리', 'LOG人(북한이탈주민',
-    '신청 순서대로 검토하되 참여 확정은 담당자 확인 후 안내합니다']) assert.ok(r.text.includes(part), part);
-  for (const bad of ['주소', '생년월일', 'PIN', '로그人']) assert.ok(!r.text.includes(bad), bad);
+    '접수정보(자동 생성): 신청 시각', '이용정보', '게시판', '접속기록', '보유·이용 기간', '동의를 거부할 권리', 'LOGIN : 人(북한이탈주민',
+    '우선순위에 따라 검토하고 같은 순위에서는 먼저 신청한 순서를 따르며']) assert.ok(r.text.includes(part), part);
+  for (const bad of ['주소', '생년월일', 'PIN', '로그人', 'LOG人']) assert.ok(!r.text.includes(bad), bad);
   r = await c.post('/register', { ...REG, consent: [] });
   assert.equal(r.status, 422);
   r = await c.post('/register', REG);
   assert.equal(r.location, '/register/done');
-  assert.equal((await app.sql.get('SELECT doc_version, agreed FROM consents')).doc_version, '2026-10-13');
+  assert.equal((await app.sql.get('SELECT doc_version, agreed FROM consents')).doc_version, '2026-10-14');
 
   const custom = await startApp({ cfg: { consent: undefined, consentJson: JSON.stringify({ version: 'v9', items: [{ key: 'privacy', title: '기관 문안', required: true, body: '본문' }] }) } });
   t.after(custom.close);
   assert.equal(loadConsent(custom.cfg).version, 'v9');
 });
 
-test('내 신청정보: 승인된 참여자는 이름만 수정(신청 시각·번호 유지), 승인 대기자는 조회만, 번호는 담당자가 본인 확인 후 변경', async (t) => {
+test('내 신청정보: 승인된 참여자는 이름 수정, 신청 시각·접수번호 유지, 승인 대기자는 조회만', async (t) => {
   const app = await startApp();
   t.after(app.close);
   const uid = await addParticipant(app.db, { name: '처음이름', phone: '01077770001', selected: true });
-  const pending = await addParticipant(app.db, { name: '대기자', phone: '01077770002' });
-  const before = (await app.sql.get('SELECT registered_at FROM registrations WHERE user_id = ?', uid)).registered_at;
+  await addParticipant(app.db, { name: '대기자', phone: '01077770002' });
+  const before = await app.sql.get('SELECT id, registered_at FROM registrations WHERE user_id = ?', uid);
   const c = app.client();
   await c.login('01077770001');
-  let r = await c.get('/me/application');
-  assert.match(r.text, /직접 바꿀 수 없습니다/);
-  assert.ok(!/name="phone"/.test(r.text), '번호 입력칸 없음');
-  r = await c.post('/me/application', { name: '' });
+  let r = await c.post('/me/application', { name: '' });
   assert.equal(r.status, 422);
   r = await c.post('/me/application', { name: '바뀐이름', phone: '01000000000', registered_at: '2000-01-01' });
   assert.equal(r.location, '/me/application');
-  const u = await app.sql.get('SELECT u.name, u.phone, r.registered_at FROM users u JOIN registrations r ON r.user_id = u.id WHERE u.id = ?', uid);
-  assert.deepEqual(u, { name: '바뀐이름', phone: '01077770001', registered_at: before });
-  assert.equal((await c.get('/me/phone')).status, 404, '본인 번호 변경 화면 없음');
+  const u = await app.sql.get('SELECT u.name, u.phone, r.id, r.registered_at FROM users u JOIN registrations r ON r.user_id = u.id WHERE u.id = ?', uid);
+  assert.deepEqual(u, { name: '바뀐이름', phone: '01077770001', id: before.id, registered_at: before.registered_at });
   assert.equal((await c.get('/me/profile')).location, '/me/application');
 
   const p = app.client();
   await p.login('01077770002');
   r = await p.get('/me');
   assert.match(r.text, /대기자/);
-  assert.ok(!/action="\/me\/application"/.test(r.text), '승인 대기자는 수정 폼 없음');
+  assert.ok(!/action="\/me\/application"/.test(r.text), '승인 대기자는 이름 수정 폼 없음');
   assert.equal((await p.post('/me/application', { name: '바꿈' })).status, 403);
+});
 
-  // 담당자가 본인 확인 후 번호 변경 → 그 사람의 로그인 종료, 새 번호 + 기존 비밀번호로 로그인
-  await addManager(app.db);
-  const m = app.client();
-  await m.adminLogin();
-  await m.post(`/admin/participants/${uid}/phone`, { phone: '010-7777-0002' });
-  assert.equal((await app.sql.get('SELECT phone FROM users WHERE id = ?', uid)).phone, '01077770001', '이미 쓰는 번호로는 변경 불가');
-  await m.post(`/admin/participants/${uid}/phone`, { phone: '010-7777-0009' });
-  assert.equal((await app.sql.get('SELECT phone FROM users WHERE id = ?', uid)).phone, '01077770009');
-  assert.equal((await c.get('/me')).location, '/login', '기존 로그인 종료');
-  assert.equal((await app.client().login('01077770009')).location, '/me');
-  assert.ok(await app.sql.get("SELECT 1 FROM audit_log WHERE action = 'user.phone_change' AND target_id = ?", uid));
-  assert.ok(pending);
+test('전화번호 직접 변경: 본인만·현재 비밀번호 확인·정규화·중복 차단, 새 번호로 로그인, 계정·승인·신청 시각·접수번호·게시글 유지', async (t) => {
+  const app = await startApp();
+  t.after(app.close);
+  const uid = await addParticipant(app.db, { name: '변경자', phone: '01078780001', selected: true });
+  const pid = await addParticipant(app.db, { name: '대기자', phone: '01078780002' });
+  await addParticipant(app.db, { name: '다른사람', phone: '01078780003' });
+  const before = await app.sql.get('SELECT * FROM registrations WHERE user_id = ?', uid);
+  const pwBefore = (await app.sql.get('SELECT password_hash FROM users WHERE id = ?', uid)).password_hash;
+  const c = app.client();
+  await c.login('01078780001');
+  await c.post('/board/free/new', { title: '내 글', body: '본문' });
+  const other = app.client();
+  await other.login('01078780001');
+  let r = await c.get('/me/application');
+  assert.match(r.text, /id="phone-change"/);
+  assert.match(r.text, /다음부터 새 번호로 로그인/);
+  r = await c.post('/me/phone', { phone: '010-7878-0009', current_password: 'wrongpass1' });
+  assert.match(r.text, /현재 비밀번호가 맞지 않습니다/);
+  r = await c.post('/me/phone', { phone: '02-123-4567', current_password: TEST_PASSWORD });
+  assert.match(r.text, /새 휴대전화 번호를 확인해 주세요/);
+  r = await c.post('/me/phone', { phone: '010 7878 0003', current_password: TEST_PASSWORD });
+  assert.equal(r.status, 409);
+  assert.match(r.text, /이미 다른 계정에서 쓰는 번호입니다/);
+  r = await c.post('/me/phone', { phone: '010-7878-0001', current_password: TEST_PASSWORD });
+  assert.match(r.text, /지금 쓰는 번호와 같습니다/);
+  assert.equal((await app.sql.get('SELECT phone FROM users WHERE id = ?', uid)).phone, '01078780001');
+
+  r = await c.post('/me/phone', { phone: '010 7878-0009', current_password: TEST_PASSWORD, user_id: String(pid) });
+  assert.equal(r.location, '/me/application');
+  const u = await app.sql.get('SELECT * FROM users WHERE id = ?', uid);
+  assert.equal(u.phone, '01078780009', '하이픈·공백 정규화');
+  assert.equal(u.password_hash, pwBefore);
+  assert.equal(u.is_selected, 1);
+  assert.equal((await app.sql.get('SELECT phone FROM users WHERE id = ?', pid)).phone, '01078780002', '다른 계정은 그대로');
+  assert.deepEqual(await app.sql.get('SELECT * FROM registrations WHERE user_id = ?', uid), before, '신청 기록·시각·접수번호 그대로');
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM registrations')).n, 3, '새 신청 없음');
+  assert.equal((await app.sql.get('SELECT COUNT(*) n FROM posts WHERE author_id = ?', uid)).n, 1, '게시글 유지');
+  const log = await app.sql.get("SELECT * FROM audit_log WHERE action = 'user.phone_change' AND target_id = ?", uid);
+  assert.deepEqual(JSON.parse(log.detail), { from: '01078780001', to: '01078780009', by: 'self' });
+  r = await c.get('/me/application');
+  assert.match(r.text, /010-7878-0009\(으\)로 바뀌었습니다/);
+  assert.equal((await other.get('/me')).location, '/login', '다른 기기 로그인 종료');
+
+  const old = app.client();
+  await old.get('/login');
+  assert.equal((await old.post('/login', { phone: '01078780001', password: TEST_PASSWORD })).status, 422, '이전 번호로 로그인 불가');
+  assert.equal((await app.client().login('010-7878-0009')).location, '/me');
+
+  // 승인 대기 신청자도 직접 변경
+  const p = app.client();
+  await p.login('01078780002');
+  r = await p.post('/me/phone', { phone: '01078780012', current_password: TEST_PASSWORD });
+  assert.equal(r.location, '/me/application');
+  assert.equal((await app.sql.get('SELECT phone FROM users WHERE id = ?', pid)).phone, '01078780012');
+  // 비로그인은 불가
+  const anon = app.client();
+  await anon.get('/login');
+  assert.equal((await anon.post('/me/phone', { phone: '01078780099', current_password: TEST_PASSWORD })).location, '/login');
 });
 
 test('기존 PIN 계정 전환: PIN으로 한 번 로그인 → 새 비밀번호를 정할 때까지 다른 화면 차단 → 이후 PIN 사용 불가', async (t) => {

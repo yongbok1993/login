@@ -68,7 +68,8 @@ export function adminRoutes(r) {
       comoAttention: await n("SELECT COUNT(*) n FROM como_links WHERE status IN ('conflict', 'error', 'needs_recheck')"),
       growPending: await n("SELECT COUNT(*) n FROM enrollments WHERE status = 'active' AND selection = 'pending'"),
       notices: await n("SELECT COUNT(*) n FROM posts WHERE board = 'notice'"),
-      unanswered: await n("SELECT COUNT(*) n FROM posts WHERE board = 'qna' AND answered_at IS NULL"),
+      unanswered: await n(`SELECT COUNT(*) n FROM posts p WHERE p.board = 'qna' AND NOT EXISTS (SELECT 1 FROM post_comments pc
+        JOIN users u ON u.id = pc.author_id WHERE pc.post_id = p.id AND u.role IN ('staff', 'manager'))`),
     });
   });
 
@@ -112,7 +113,7 @@ export function adminRoutes(r) {
       return redirect(c, `/admin/participants/${user.id}`);
     }
     if (selected && c.como.configured) await checkLink(c.db, c.como, await getUser(c.db, user.id), c.user.id);
-    await c.session.flash('ok', selected ? `승인했습니다. L 관계 회차 배정 ${result.created + result.restored}건` : '승인을 해제했습니다.');
+    await c.session.flash('ok', selected ? `승인했습니다. 관계망 회차 배정 ${result.created + result.restored}건` : '승인을 해제했습니다.');
     return redirect(c, `/admin/participants/${user.id}`);
   });
 
@@ -144,7 +145,7 @@ export function adminRoutes(r) {
       await c.session.flash('error', '휴대전화 번호를 확인해 주세요.');
     } else if (phone === user.phone) {
       await c.session.flash('error', '지금 번호와 같습니다.');
-    } else if (!(await changePhone(c.db, c.user.id, user.id, phone))) {
+    } else if (!(await changePhone(c.db, c.user.id, user.id, phone, { confirmed: true }))) {
       await c.session.flash('error', '이미 다른 계정이 쓰는 번호입니다.');
     } else {
       await c.session.flash('ok', '전화번호를 바꿨습니다. 본인은 새 번호와 기존 비밀번호로 로그인합니다.');

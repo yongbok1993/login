@@ -121,8 +121,8 @@ export function parseSessionForm(body) {
 }
 
 /**
- * 회차 생성. L 관계(auto) 프로그램이면 승인된 참여자에게 바로 배정한다.
- * 배정은 재실행해도 중복되지 않으므로, 중간에 실패하면 'L 관계 배정'에서 다시 실행하면 된다.
+ * 회차 생성. O 관계망 형성(auto) 프로그램이면 승인된 참여자에게 바로 배정한다.
+ * 배정은 재실행해도 중복되지 않으므로, 중간에 실패하면 '관계망 자동 배정'에서 다시 실행하면 된다.
  */
 export async function createSession(db, actorId, programId, s) {
   const now = nowIso();

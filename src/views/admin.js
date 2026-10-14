@@ -7,7 +7,7 @@ import { APPLICATION_STATUS, applicationStatus, INTERNAL_STATUS, ROLES } from '.
 import { applicationSummary, REVIEW_NOTICE } from './application.js';
 import { SELECTION } from '../services/enrollments.js';
 import { THEMES } from '../site.js';
-import { csrfField, errorSummary, field, layout, textInput } from './layout.js';
+import { csrfField, errorSummary, field, layout, textInput, themeMark } from './layout.js';
 
 function page(ctx, title, inner) {
   return layout(ctx, {
@@ -50,7 +50,7 @@ export function dashboardPage(ctx, counts) {
       ${isManager(ctx) ? html`<a class="tile" href="/admin/participants?status=received"><span>승인 대기 신청</span><b>${counts.received}</b></a>
       <a class="tile" href="/admin/participants?status=selected"><span>승인된 참여자</span><b>${counts.selected} / ${counts.cap}</b></a>` : ''}
       <a class="tile" href="/admin/grow"><span>Grow 선정 대기</span><b>${counts.growPending}</b></a>
-      <a class="tile" href="/board/qna"><span>답변 대기 질문</span><b>${counts.unanswered}</b></a>
+      <a class="tile" href="/board/qna"><span>담당자 답변 대기 질문</span><b>${counts.unanswered}</b></a>
       <a class="tile" href="/board/notice"><span>공지사항</span><b>${counts.notices}</b></a>
       <a class="tile" href="/admin/programs"><span>프로그램</span><b>${counts.programs}</b></a>
       ${isManager(ctx) ? html`<a class="tile" href="/admin/como"><span>꼬모 확인 필요</span><b>${counts.comoAttention}</b></a>` : ''}
@@ -194,7 +194,7 @@ export function programsPage(ctx, programs) {
     <h1 class="page-title">프로그램</h1>
     <p class="actions"><a class="btn small" href="/admin/programs/new">프로그램 추가</a></p>
     ${table(['테마', '프로그램', '운영 계획', '배정 방식', '공개', '회차'], programs.map((p) => html`<tr>
-      <td><span class="theme-tag ${THEMES[p.theme].key}">${p.theme}</span></td>
+      <td><span class="theme-tag ${THEMES[p.theme].key}">${themeMark(p.theme)}</span></td>
       <td><a href="/admin/programs/${p.id}">${p.name}</a>${p.archived_at ? html` <span class="chip muted-chip">지난 계획(보관)</span>` : ''}</td>
       <td>${p.schedule_label}</td>
       <td>${ASSIGN_MODES[p.assign_mode]}</td>
@@ -207,7 +207,7 @@ function programFields(p, errors, isNew) {
   return html`
     ${field({ id: 'theme', label: '테마', error: errors.theme, input: () => html`
       <select id="theme" name="theme">${Object.entries(THEMES).map(([k, t]) => html`
-        <option value="${k}"${p.theme === k ? html` selected` : ''}>${k} ${t.ko}</option>`)}</select>` })}
+        <option value="${k}"${p.theme === k ? html` selected` : ''}>${t.letter} : ${t.en} — ${t.ko}</option>`)}</select>` })}
     ${field({ id: 'name', label: '프로그램명', error: errors.name,
       input: (d) => textInput({ id: 'name', value: p.name, maxlength: 80, required: true, error: errors.name, describedBy: d }) })}
     ${field({ id: 'detail', label: '세부 내용', input: (d) => textInput({ id: 'detail', value: p.detail, maxlength: 200, describedBy: d }) })}
@@ -255,7 +255,7 @@ export function programPage(ctx, { program, sessions, values, errors = {}, sessi
   return page(ctx, program.name, html`
     <p class="crumb"><a href="/admin/programs">프로그램</a></p>
     <h1 class="page-title">${program.name}</h1>
-    ${program.assign_mode === 'external' ? html`<p class="card">개별 심리상담 접수·회차는 꼬모에서 관리합니다. 현황은 <a href="/admin/como">꼬모 연동</a>에서 확인합니다.</p>` : ''}
+    ${program.assign_mode === 'external' ? html`<p class="card">전문 심리상담 접수·회차는 꼬모에서 관리합니다. 현황은 <a href="/admin/como">꼬모 연동</a>에서 확인합니다.</p>` : ''}
     ${program.assign_mode === 'internal' ? html`<p class="card">기관 내부 운영 — 참여자 개인 일정·신청 목록에 표시되지 않습니다.</p>` : ''}
 
     ${hasSessions ? html`<div class="card">
@@ -348,10 +348,10 @@ export function sessionPage(ctx, { session, roster, candidates, values, errors =
 }
 
 export function linkPage(ctx, { programs, result }) {
-  return page(ctx, 'L 관계 배정', html`
-    <h1 class="page-title">L 관계 자동 배정</h1>
+  return page(ctx, '관계망 자동 배정', html`
+    <h1 class="page-title">관계망 자동 배정</h1>
     <div class="card">
-      <p>승인된 참여자 전원을 L 관계 프로그램의 모든 회차에 배정합니다. 이미 배정된 회차는 다시 만들지 않습니다.</p>
+      <p>승인된 참여자 전원을 O 관계망 형성의 전체 참여 프로그램(요리교실·절기행사·나들이·김장나눔활동·자조모임) 모든 회차에 배정합니다. 이미 배정된 회차는 다시 만들지 않습니다.</p>
       ${result ? html`<p class="flash ok" role="status">새 배정 ${result.created}건 · 복원 ${result.restored}건</p>` : ''}
       ${postButton(ctx, '/admin/link/run', '자동 배정 실행', { cls: 'btn' })}
     </div>

@@ -94,7 +94,6 @@ test('전화번호 변경(담당자 본인 확인 후): 연결 해제·현황 �
   const c = app.client();
   await c.login('01073000001');
   assert.match((await c.get('/me')).text, /4 \/ 6회 완료/);
-  assert.equal((await c.get('/me/phone')).status, 404, '참여자 본인은 번호를 바꿀 수 없음');
 
   await addManager(app.db);
   const m = app.client();

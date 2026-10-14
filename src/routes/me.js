@@ -5,9 +5,12 @@ import { applyGrow, cancelOwnGrow, EnrollError, growApplyBlocker } from '../serv
 import { getSession, groupByTheme, listPrograms } from '../services/programs.js';
 import { attendedFor, groupAttended, growSessionsFor, nextAction, pendingWishCount, upcomingFor } from '../services/schedule.js';
 import { recentNotices } from '../services/board.js';
-import { getApplication, isApprovedParticipant, listConsents, parseName, updateName } from '../services/users.js';
+import { formatPhone, normalizePhone } from '../lib/phone.js';
+import { verifyPassword } from '../lib/password.js';
+import { loginBlock, recordAttempt } from '../services/login.js';
+import { changePhone, getApplication, isApprovedParticipant, listConsents, parseName, updateName } from '../services/users.js';
 import * as views from '../views/me.js';
-import { deny, intParam, redirect, render, requireParticipant, requireSelected } from './helpers.js';
+import { deny, field, intParam, redirect, render, requireParticipant, requireSelected } from './helpers.js';
 
 /** 참여자 영역. 모든 조회는 세션 사용자 ID 기준이며 다른 사용자 ID를 받지 않는다. */
 export function meRoutes(r) {
@@ -46,7 +49,7 @@ export function meRoutes(r) {
     growSessions: await growSessionsFor(c.db, c.user.id),
   }));
 
-  // O 마음 → 개별 심리상담
+  // L 정서 지원 → 전문 심리상담
   r.get('/me/open/counseling', requireSelected, async (c) => render(c, views.counselingPage, await counseling(c)));
 
   // 상담신청하기: 선정 여부를 서버에서 확인한 뒤 꼬모로 이동. 전화번호 등은 전달하지 않는다.
@@ -112,4 +115,26 @@ export function meRoutes(r) {
   });
 
   r.get('/me/profile', requireParticipant, (c) => redirect(c, '/me/application', 301));
+  r.get('/me/phone', requireParticipant, (c) => redirect(c, '/me/application#phone-change', 302));
+
+  // 전화번호(로그인 아이디) 변경: 본인 계정만, 현재 비밀번호 재확인. 승인 여부와 관계없이 본인이 바꾼다.
+  // 계정·승인 상태·최초 신청 시각·접수번호는 그대로이며 새 신청을 만들지 않는다. 이전 번호로는 더 로그인할 수 없다.
+  r.post('/me/phone', requireParticipant, async (c) => {
+    const { db, cfg, user } = c;
+    const phoneInput = field(c, 'phone');
+    const fail = (phoneErrors, status = 422) => application(c, { phoneValue: phoneInput, phoneErrors }, status);
+    if (await loginBlock(db, { phone: user.phone })) return fail({ current_password: '시도가 많아 잠시 잠겼습니다. 잠시 후 다시 시도해 주세요.' }, 429);
+    const ok = await verifyPassword(cfg.sessionSecret, field(c, 'current_password'), user.password_hash);
+    await recordAttempt(db, { kind: 'pin', phone: user.phone, ip: c.ip, success: ok });
+    if (!ok) return fail({ current_password: '현재 비밀번호가 맞지 않습니다.' });
+    const phone = normalizePhone(phoneInput);
+    if (!phone) return fail({ phone: '새 휴대전화 번호를 확인해 주세요. 예: 010-1234-5678' });
+    if (phone === user.phone) return fail({ phone: '지금 쓰는 번호와 같습니다.' });
+    if (!(await changePhone(db, user.id, user.id, phone, { keepTokenHash: c.session.tokenHash }))) {
+      return fail({ phone: '이미 다른 계정에서 쓰는 번호입니다. 담당자에게 문의해 주세요.' }, 409);
+    }
+    await c.session.regenerate(user.id);
+    await c.session.flash('ok', `전화번호가 ${formatPhone(phone)}(으)로 바뀌었습니다. 다음부터 새 번호와 지금 비밀번호로 로그인합니다.`);
+    return redirect(c, '/me/application');
+  });
 }

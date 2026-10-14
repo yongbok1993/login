@@ -77,6 +77,22 @@ export class Client {
   }
 
   /** 휴대전화 번호 + PIN 로그인 */
+  /** multipart 업로드(파일 1개). files: { field: { name, type, bytes } } */
+  async upload(path, fields, files) {
+    const fd = new FormData();
+    fd.append('_csrf', this.csrf || '');
+    for (const [k, v] of Object.entries(fields || {})) fd.append(k, v);
+    for (const [k, f] of Object.entries(files || {})) fd.append(k, new File([f.bytes], f.name, { type: f.type || 'application/octet-stream' }));
+    const headers = new Headers();
+    if (this.cookies.size) headers.set('cookie', [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; '));
+    const req = new Request(`https://login.test${path}`, { method: 'POST', headers, body: fd });
+    const res = await this.app.fetch(req, {}, {});
+    const text = await res.text();
+    const m = text.match(/name="_csrf" value="([^"]+)"/);
+    if (m) this.csrf = m[1];
+    return { status: res.status, location: res.headers.get('location'), text, headers: res.headers };
+  }
+
   async adminLogin(loginId = 'admin', password = TEST_PASSWORD) {
     await this.get('/admin/login');
     const r = await this.post('/admin/login', { login_id: loginId, password });

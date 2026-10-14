@@ -18,7 +18,7 @@ const LINK_PAIRS = `u.is_selected = 1 AND u.account_status = 'active' AND u.role
   AND (?2 IS NULL OR u.id = ?2) AND (?3 IS NULL OR s.id = ?3)`;
 
 /**
- * L 관계 자동 배정 문장(batch용): 승인된 참여자 × L 관계(auto) 프로그램의 모든 회차.
+ * 관계망 자동 배정 문장(batch용): 승인된 참여자 × 전체 참여(auto) 프로그램의 모든 회차.
  * UNIQUE(user_id, session_id)로 재실행해도 중복이 생기지 않는다.
  * 선정 해제로 취소된 배정만 다시 활성화하고, 관리자가 개별 취소한 배정은 되살리지 않는다.
  * 자동 배정은 출석 처리가 아니다.
@@ -136,7 +136,7 @@ export function growApplications(db, { status = 'pending' } = {}) {
     ORDER BY p.sort_order, s.date IS NULL, s.date, s.round_no, e.created_at`, status);
 }
 
-/** 관리자 배정(O 마음·캠페인 등 manual 프로그램). 승인된 참여자만 배정된다. */
+/** 관리자 배정(사례관리·평가회 등 manual 프로그램). 승인된 참여자만 배정된다. */
 export async function assignManual(db, actorId, sessionId, userIds) {
   const s = await get(db, `SELECT p.assign_mode FROM program_sessions s JOIN programs p ON p.id = s.program_id WHERE s.id = ?`, sessionId);
   if (!s || s.assign_mode !== 'manual') throw new EnrollError('not_found');

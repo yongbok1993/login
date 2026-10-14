@@ -69,7 +69,14 @@ export function requireSelected(c) {
   return null;
 }
 
-/** 내부 서비스(게시판 등): 승인된 참여자와 관리자 */
+/** 게시판: 로그인한 신청자(승인 대기·승인 해제 포함)와 담당자. 이용 중지 계정은 제외 */
+export function requireBoardUser(c) {
+  if (!c.user) return redirect(c, '/login');
+  if (c.user.role === 'participant' && c.user.account_status === 'suspended') return deny(c, 403, notApprovedMessage(c.user));
+  return null;
+}
+
+/** 내부 서비스(상세 프로그램 등): 승인된 참여자와 관리자 */
 export function requireMember(c) {
   if (!c.user) return redirect(c, '/login');
   if (!canUseInternal(c.user)) return deny(c, 403, notApprovedMessage(c.user));

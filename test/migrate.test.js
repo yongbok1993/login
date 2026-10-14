@@ -18,8 +18,10 @@ test('자동 마이그레이션: 빈 DB에 첫 요청 시 전체 적용, 다시 
     db, como: { configured: false }, logger: console }) });
   const r = await app.fetch(new Request('https://x.test/'), {}, {});
   assert.equal(r.status, 200);
-  assert.match(await r.text(), /LOG<em>人<\/em>/);
-  assert.equal((await db.prepare("SELECT COUNT(*) n FROM programs WHERE archived_at IS NULL").first()).n, 15);
+  assert.match(await r.text(), /LOGIN<span class="colon"> : <\/span><em>人<\/em>/);
+  const active = (await db.prepare("SELECT theme, name FROM programs WHERE archived_at IS NULL ORDER BY theme, sort_order").all()).results;
+  assert.deepEqual(active.map((p) => `${p.theme}:${p.name}`), ['G:직업·적성 체험', 'G:맞춤형 체험 활동', 'G:의사소통교육', 'IN:통합사례회의', 'IN:평가회',
+    'L:개별 사례관리', 'L:전문 심리상담', 'O:요리교실', 'O:절기행사', 'O:나들이', 'O:김장나눔활동', 'O:참여자 주도형 자조모임']);
   const names = (await db.prepare('SELECT name FROM d1_migrations ORDER BY id').all()).results.map((x) => x.name);
   assert.deepEqual(names, MIGRATIONS.map((m) => m.name));
   assert.equal(ensureMigrated(db), ensureMigrated(db), '같은 바인딩은 한 번만 확인(같은 작업 재사용)');
@@ -93,6 +95,11 @@ test('0011: 운영과 같은 기존 데이터(PIN 계정·주소·생년월일·
   assert.equal(meetup.is_public, 0);
   const label = async (code) => (await db.prepare('SELECT name, schedule_label FROM programs WHERE code = ?').bind(code).first());
   assert.deepEqual(await label('link-kimjang'), { name: '김장나눔활동', schedule_label: '11월 · 1회' });
-  assert.deepEqual(await label('open-counseling'), { name: '개별 심리상담', schedule_label: '2~11월 중 제공 · 예산상 1인 2회·총 20회' });
+  assert.deepEqual(await label('open-counseling'), { name: '전문 심리상담', schedule_label: '4~7월 · 총 8회·월 2회' });
+  for (const code of ['open-meetup', 'open-kit', 'grow-craft', 'in-campaign']) {
+    assert.ok((await db.prepare('SELECT archived_at FROM programs WHERE code = ?').bind(code).first()).archived_at, `${code} 보관`);
+  }
+  assert.equal((await db.prepare("SELECT theme FROM programs WHERE code = 'link-cooking'").first()).theme, 'O');
+  assert.equal((await db.prepare("SELECT theme FROM programs WHERE code = 'open-casework'").first()).theme, 'L');
   assert.deepEqual(await label('in-evaluation'), { name: '평가회', schedule_label: '12월 · 1회' });
 });

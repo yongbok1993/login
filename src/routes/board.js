@@ -1,18 +1,18 @@
 import {
-  addComment, BOARDS, canComment, canDeleteComment, canDeletePost, canEditComment, canEditPost, canWrite, createPost, deleteAnswer,
-  deleteComment, deletePost, getComment, getPost, isBoard, listComments, listPosts, parsePostForm, parseTextForm, setAnswer, updateComment,
+  addComment, BOARDS, canComment, canDeleteComment, canDeletePost, canEditComment, canEditPost, canWrite, createPost,
+  deleteComment, deletePost, getComment, getPost, isBoard, listComments, listPosts, parsePostForm, parseTextForm, updateComment,
   updatePost,
 } from '../services/board.js';
-import { isAdminRole } from '../services/users.js';
 import * as views from '../views/board.js';
-import { deny, intParam, redirect, render, requireMember } from './helpers.js';
+import { deny, intParam, redirect, render, requireBoardUser } from './helpers.js';
 
 /**
- * 게시판(공지사항·자유게시판·질문과 답변). 모든 경로에서 서버가 로그인·승인 상태(requireMember)를 확인하고,
- * 글·댓글 단위 권한(작성자/관리자, 담당자만 보기)을 다시 확인한다. 볼 수 없는 글은 404로 응답해 존재도 드러내지 않는다.
+ * 게시판(공지사항·자유게시판·질문과 답변). 모든 경로에서 서버가 로그인·이용 상태(requireBoardUser: 로그인한 신청자·담당자,
+ * 이용 중지 제외)를 확인하고, 글·댓글 단위 권한(작성자/담당자, 담당자에게 비공개)을 다시 확인한다.
+ * 볼 수 없는 글은 404로 응답해 존재도 드러내지 않는다.
  */
 export function boardRoutes(r) {
-  const member = requireMember;
+  const member = requireBoardUser;
 
   // 이전 공지 주소 → 공지사항 게시판
   r.get('/notices', member, (c) => redirect(c, '/board/notice', 301));
@@ -107,7 +107,7 @@ export function boardRoutes(r) {
     const post = await loadPost(c);
     if (!post) return deny(c, 404);
     if (!canComment(c.user, post)) return deny(c, 403);
-    const { value, error } = parseTextForm(c.body);
+    const { value, error } = parseTextForm(c.body, 'body', post.board === 'qna' ? 10000 : undefined);
     if (error) return showPost(c, post, { commentError: error }, 422);
     await addComment(c.db, c.user, post.id, value);
     return redirect(c, `/board/${post.board}/${post.id}#comments-title`);
@@ -131,7 +131,7 @@ export function boardRoutes(r) {
     const found = await loadComment(c);
     if (!found) return deny(c, 404);
     if (!canEditComment(c.user, found.comment)) return deny(c, 403);
-    const { value, error } = parseTextForm(c.body);
+    const { value, error } = parseTextForm(c.body, 'body', found.post.board === 'qna' ? 10000 : undefined);
     if (error) return render(c, (ctx) => views.commentEditPage(ctx, found.post, found.comment, { value, error }), undefined, 422);
     await updateComment(c.db, found.comment, value);
     return redirect(c, `/board/${found.post.board}/${found.post.id}#comments-title`);
@@ -143,7 +143,7 @@ export function boardRoutes(r) {
     if (!canDeleteComment(c.user, found.comment)) return deny(c, 403);
     const { post, comment } = found;
     return render(c, (ctx) => views.deleteConfirmPage(ctx, {
-      title: '댓글', description: `이 댓글을 삭제할까요? 되돌릴 수 없습니다. “${comment.body.slice(0, 60)}”`,
+      title: post.board === 'qna' ? '답변' : '댓글', description: `삭제할까요? 되돌릴 수 없습니다. “${comment.body.slice(0, 60)}”`,
       action: `/board/${post.board}/${post.id}/comments/${comment.id}/delete`, back: `/board/${post.board}/${post.id}`,
     }), undefined);
   });
@@ -153,31 +153,7 @@ export function boardRoutes(r) {
     if (!found) return deny(c, 404);
     if (!canDeleteComment(c.user, found.comment)) return deny(c, 403);
     await deleteComment(c.db, c.user, found.comment);
-    await c.session.flash('ok', '댓글을 삭제했습니다.');
+    await c.session.flash('ok', '삭제했습니다.');
     return redirect(c, `/board/${found.post.board}/${found.post.id}#comments-title`);
   });
-
-  // ── 질문과 답변: 관리자 답변 ──
-  r.post('/board/qna/:id/answer', member, async (c) => {
-    c.params.board = 'qna';
-    const post = await loadPost(c);
-    if (!post) return deny(c, 404);
-    if (!isAdminRole(c.user)) return deny(c, 403);
-    const { value, error } = parseTextForm(c.body, 'answer', 10000);
-    if (error) return showPost(c, post, { answerError: error }, 422);
-    await setAnswer(c.db, c.user, post, value);
-    await c.session.flash('ok', '답변을 저장했습니다.');
-    return redirect(c, `/board/qna/${post.id}`);
-  });
-
-  r.post('/board/qna/:id/answer/delete', member, async (c) => {
-    c.params.board = 'qna';
-    const post = await loadPost(c);
-    if (!post) return deny(c, 404);
-    if (!isAdminRole(c.user)) return deny(c, 403);
-    await deleteAnswer(c.db, post);
-    await c.session.flash('ok', '답변을 삭제했습니다.');
-    return redirect(c, `/board/qna/${post.id}`);
-  });
-
 }

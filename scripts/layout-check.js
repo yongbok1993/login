@@ -121,6 +121,30 @@ async function checkRegister(browser) {
   return problems.length;
 }
 
+// 인쇄(A4): 메뉴·버튼·장식이 빠지고 본문(신청정보)이 잘리지 않는지
+async function checkPrint(page) {
+  const problems = [];
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.goto(`${BASE}/me/application`);
+  await page.emulateMedia({ media: 'print' });
+  const r = await page.evaluate(() => {
+    const vis = (sel) => [...document.querySelectorAll(sel)].some((el) => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0);
+    const dl = document.querySelector('dl.application');
+    return { header: vis('header.top'), footer: vis('footer'), buttons: vis('.btn'), nav: vis('nav'), summary: !!dl && dl.getBoundingClientRect().height > 0,
+      text: dl ? dl.textContent : '' };
+  });
+  if (r.header || r.footer || r.nav) problems.push('인쇄에 메뉴·머리말·꼬리말이 나옴');
+  if (r.buttons) problems.push('인쇄에 버튼이 나옴');
+  if (!r.summary || !/신청 시각[\s\S]*이름[\s\S]*전화번호[\s\S]*신청 상태/.test(r.text)) problems.push('인쇄 본문(신청정보) 누락');
+  const pdf = await page.pdf({ format: 'A4', printBackground: false });
+  if (pdf.length < 1000) problems.push('A4 PDF 생성 실패');
+  await page.emulateMedia({ media: 'screen' });
+  if (shotDir) fs.writeFileSync(path.join(shotDir, 'print-me-application-A4.pdf'), pdf);
+  console.log(`${problems.length ? '✗' : '✓'} 내 신청정보 A4 인쇄`);
+  for (const p of problems) console.log(`    ${p}`);
+  return problems.length;
+}
+
 let failures = 0;
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined) });
 try {
@@ -128,7 +152,7 @@ try {
   failures += await checkRegister(browser);
   const anon = await browser.newPage();
   for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/admin/login', 'admin-login'], ['/register', 'register'],
-    ['/password/reset', 'password-reset']]) {
+    ['/password/reset', 'password-reset'], ['/forms', 'forms']]) {
     failures += await check(anon, u, l);
   }
   failures += await check(anon, '/board/notice', 'login-redirect');
@@ -147,7 +171,11 @@ try {
   const unselected = await browser.newPage();
   await login(unselected, '01000000004');
   failures += await check(unselected, '/me', 'me-pending');
-  failures += await check(unselected, '/board/notice', 'pending-blocked');
+  failures += await check(unselected, '/me/application', 'me-pending-application');
+  failures += await check(unselected, '/board/notice', 'pending-board');
+  failures += await check(unselected, '/board/qna/new', 'pending-qna-new');
+  failures += await check(unselected, '/me/programs', 'pending-programs-blocked');
+  failures += await checkPrint(unselected);
 
   const m = await browser.newPage();
   await adminLogin(m);
@@ -156,7 +184,7 @@ try {
   for (const [u, l] of [['/admin', 'admin'], ['/admin/participants', 'admin-participants'], ['/admin/participants/2', 'admin-participant'],
     ['/admin/programs', 'admin-programs'], ['/admin/programs/1', 'admin-program'], ['/admin/sessions/1', 'admin-session'],
     ['/admin/programs/new', 'admin-program-new'], ['/admin/link', 'admin-link'], ['/admin/como', 'admin-como'], ['/admin/audit', 'admin-audit'],
-    ['/admin/grow', 'admin-grow'], ['/admin/grow?status=all', 'admin-grow-all'], ['/board/notice/new', 'admin-notice-new'], ['/admin/staff', 'admin-staff'], ['/admin/account', 'admin-account'], [`/admin/sessions/${growId}`, 'admin-session-grow']]) {
+    ['/admin/grow', 'admin-grow'], ['/admin/grow?status=all', 'admin-grow-all'], ['/board/notice/new', 'admin-notice-new'], ['/admin/forms', 'admin-forms'], ['/admin/staff', 'admin-staff'], ['/admin/account', 'admin-account'], [`/admin/sessions/${growId}`, 'admin-session-grow']]) {
     failures += await check(m, u, l);
   }
 } finally {

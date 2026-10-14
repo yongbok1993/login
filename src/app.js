@@ -8,6 +8,7 @@ import { adminRoutes } from './routes/admin.js';
 import { adminAuthRoutes } from './routes/adminAuth.js';
 import { afterLoginPath, authRoutes } from './routes/auth.js';
 import { boardRoutes } from './routes/board.js';
+import { formRoutes } from './routes/forms.js';
 import { deny, redirect, render, respond } from './routes/helpers.js';
 import { meRoutes } from './routes/me.js';
 import { groupByTheme, listPrograms } from './services/programs.js';
@@ -15,6 +16,9 @@ import { canUseInternal, getUser, isAdminRole } from './services/users.js';
 import { homePage } from './views/public.js';
 
 const MAX_BODY = 20 * 1024;
+// 신청서·동의서 양식 업로드(담당자)만 multipart와 큰 본문을 받는다.
+const MAX_UPLOAD = 2 * 1024 * 1024;
+const UPLOAD_PATH = /^\/admin\/forms\/[a-z]+$/;
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy': [
@@ -49,14 +53,23 @@ function buildRouter() {
     canUseInternal(c.user) ? groupByTheme(await listPrograms(c.db, { publicOnly: true })) : null, 200, { session: !!c.user }));
   authRoutes(r);
   boardRoutes(r);
+  formRoutes(r);
   meRoutes(r);
   adminAuthRoutes(r);
   adminRoutes(r);
   return r;
 }
 
-async function parseBody(request) {
+async function parseBody(request, { allowUpload = false } = {}) {
   const type = request.headers.get('content-type') || '';
+  if (allowUpload && type.startsWith('multipart/form-data')) {
+    const out = { _files: {} };
+    for (const [k, v] of await request.formData()) {
+      if (typeof v === 'string') out[k] = v;
+      else out._files[k] = v;
+    }
+    return out;
+  }
   if (!type.startsWith('application/x-www-form-urlencoded')) return {};
   const text = await request.text();
   if (text.length > MAX_BODY) throw Object.assign(new Error('payload_too_large'), { status: 413 });
@@ -121,9 +134,10 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
 
       try {
         if (c.method === 'POST') {
+          const allowUpload = UPLOAD_PATH.test(c.path);
           const len = Number(request.headers.get('content-length') || 0);
-          if (len > MAX_BODY) return withHeaders(plainError(413, '요청이 너무 큽니다.'), deps.cfg);
-          c.body = await parseBody(request);
+          if (len > (allowUpload ? MAX_UPLOAD : MAX_BODY)) return withHeaders(plainError(413, '요청이 너무 큽니다.'), deps.cfg);
+          c.body = await parseBody(request, { allowUpload });
         }
         const match = router.match(c.method, c.path);
         let response = null;

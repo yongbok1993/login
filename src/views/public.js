@@ -1,34 +1,47 @@
 import { html } from '../lib/html.js';
-import { canUseInternal, isAdminRole } from '../services/users.js';
+import { canUseInternal, isAdminRole, PARTICIPANT_CAP } from '../services/users.js';
 import { SITE, THEME_ORDER, THEMES } from '../site.js';
-import { REVIEW_NOTICE } from './application.js';
-import { layout, stamp, themeDot, wordmark } from './layout.js';
+import { SELECTION_NOTICE } from './application.js';
+import { layout, stamp, themeDot, themeName, wordmark } from './layout.js';
 
 function programItems(list) {
-  return list.map((p) => html`<li>${p.name} <small>${p.detail ? html`${p.detail}<br>` : ''}${p.schedule_label}</small></li>`);
+  return list.map((p) => html`<li>${p.name} <small>${p.schedule_label}</small>${p.detail ? html`<span class="desc">${p.detail}</span>` : ''}</li>`);
 }
 
-/** 프로그램 카드(L·O·G·IN 같은 구성). 승인된 참여자와 관리자에게만 보여 준다. */
+function areaHead(k, Tag = 'h3') {
+  const t = THEMES[k];
+  const head = html`<span class="area-name">${themeName(k)}</span><span class="area-ko">${t.ko}</span>`;
+  return Tag === 'h2' ? html`<h2 class="area-title">${head}</h2>` : html`<h3 class="area-title">${head}</h3>`;
+}
+
+/** 공개 영역 소개(네 영역 이름·짧은 설명). 상세 프로그램은 넣지 않는다. */
+function areaIntro() {
+  return html`<div class="log-grid four">
+    ${THEME_ORDER.map((k) => html`<article class="log-card ${THEMES[k].key}">
+      ${stamp(k, [])}
+      ${areaHead(k)}
+      <p class="area-desc">${THEMES[k].desc}</p>
+    </article>`)}
+  </div>`;
+}
+
+/** 상세 프로그램 카드(L·O·G·iN 같은 구성). 승인된 참여자와 담당자에게만 서버에서 넣는다. */
 export function programCards(groups) {
-  return html`
-    <div class="log-grid four">
-      ${THEME_ORDER.map((k) => {
-        const t = THEMES[k];
-        return html`<article class="log-card ${t.key}">
-          ${stamp(k, t.short)}
-          <h3>${t.title}</h3><span class="en">${t.en.toUpperCase()}</span>
-          <ul>${programItems(groups[k] || [])}</ul>
-        </article>`;
-      })}
-    </div>`;
+  return html`<div class="log-grid four">
+    ${THEME_ORDER.map((k) => html`<article class="log-card ${THEMES[k].key}">
+      ${stamp(k, [])}
+      ${areaHead(k)}
+      <ul>${programItems(groups[k] || [])}</ul>
+    </article>`)}
+  </div>`;
 }
 
 function heroButtons(ctx) {
   const u = ctx.user;
-  if (!u) return html`<a class="btn" href="/register">신청하기</a><a class="btn ghost" href="/login">로그인</a>`;
+  if (!u) return html`<a class="btn" href="/register">참여 신청</a><a class="btn ghost" href="/login">로그인</a>`;
   if (isAdminRole(u)) return html`<a class="btn" href="/admin">관리</a><a class="btn ghost" href="/board">게시판</a>`;
   if (canUseInternal(u)) return html`<a class="btn" href="/me">나의 현황</a><a class="btn ghost" href="/board">게시판</a>`;
-  return html`<a class="btn" href="/me">내 신청정보</a>`;
+  return html`<a class="btn" href="/me">내 신청정보</a><a class="btn ghost" href="/board">게시판</a>`;
 }
 
 export function homePage(ctx, groups) {
@@ -36,25 +49,67 @@ export function homePage(ctx, groups) {
   <section class="hero">
     <div class="wrap">
       <div>
-        <p class="eyebrow">${SITE.orgName} · ${SITE.projectName}</p>
+        <p class="eyebrow">${SITE.orgName}</p>
         <h1 class="wordmark">${wordmark()}</h1>
+        <p class="lead">${SITE.orgName}의 ${SITE.projectName}입니다.</p>
         <p class="themes-line">
-          ${THEME_ORDER.map((k) => html`<b>${themeDot(k)}${THEMES[k].letter} ${THEMES[k].short} — ${THEMES[k].en}</b>`)}
+          ${THEME_ORDER.map((k) => html`<b>${themeDot(k)}${themeName(k)} — ${THEMES[k].ko}</b>`)}
         </p>
         <div class="btns">${heroButtons(ctx)}</div>
-        ${ctx.user ? '' : html`<p class="hero-note">${REVIEW_NOTICE}</p>`}
       </div>
       <div class="stamps" aria-hidden="true">
-        ${THEME_ORDER.map((k) => stamp(k, [THEMES[k].short, THEMES[k].en]))}
+        ${THEME_ORDER.map((k) => stamp(k, THEMES[k].ko.split(' ')))}
       </div>
     </div>
   </section>
+
+  <section id="areas" class="sec">
+    <div class="wrap">
+      <div class="sec-head"><h2>네 가지 영역</h2></div>
+      ${areaIntro()}
+    </div>
+  </section>
+
   ${groups ? html`<section id="programs" class="sec">
     <div class="wrap">
       <div class="sec-head"><h2>프로그램</h2></div>
       ${programCards(groups)}
     </div>
-  </section>` : ''}`;
+  </section>` : ''}
+
+  <section id="guide" class="sec guide">
+    <div class="wrap">
+      <div class="sec-head"><h2>참여 안내</h2></div>
+      <div class="guide-grid">
+        <div class="card">
+          <h3 class="card-title">참여 대상</h3>
+          <p>북한이탈주민</p>
+          <p class="small muted">자세한 참여 기준은 ${SITE.orgName}(${SITE.tel})에 문의해 주세요. 승인된 참여자는 최대 ${PARTICIPANT_CAP}명입니다.</p>
+        </div>
+        <div class="card">
+          <h3 class="card-title">신청·선정 절차</h3>
+          <ol class="steps">
+            <li><b>참여 신청</b> 이름·휴대전화 번호·비밀번호를 입력하고 동의하면 접수됩니다. 신청 시각은 자동으로 기록됩니다.</li>
+            <li><b>담당자 검토</b> ${SELECTION_NOTICE}</li>
+            <li><b>참여 확정 안내</b> 담당자의 최종 승인 후 안내합니다. 먼저 신청했다고 자동으로 확정되지 않습니다.</li>
+            <li><b>참여</b> 승인되면 프로그램 안내와 나의 현황을 이용할 수 있습니다.</li>
+          </ol>
+        </div>
+        <div class="card">
+          <h3 class="card-title">신청서·동의서</h3>
+          <p>프로그램 신청서와 개인정보 활용 동의서를 내려받거나 인쇄할 수 있습니다.</p>
+          <p class="actions"><a class="btn ghost" href="/forms">신청서·동의서 보기</a></p>
+        </div>
+        <div class="card">
+          <h3 class="card-title">문의</h3>
+          <p><b>${SITE.orgName}</b></p>
+          <p>전화 <a href="tel:${SITE.tel}">${SITE.tel}</a></p>
+          <p class="small muted">${SITE.address}</p>
+        </div>
+      </div>
+      ${ctx.user ? '' : html`<p class="actions"><a class="btn" href="/register">참여 신청</a><a class="btn ghost" href="/login">로그인</a></p>`}
+    </div>
+  </section>`;
   return layout(ctx, { title: '', body });
 }
 

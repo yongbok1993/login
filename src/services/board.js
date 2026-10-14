@@ -3,9 +3,10 @@ import { nowIso } from '../lib/time.js';
 import { auditStmt } from './audit.js';
 import { isAdminRole } from './users.js';
 
-// 게시판: 공지사항(관리자 작성)·자유게시판(참여자 글·댓글)·질문과 답변(참여자 질문, 관리자 답변).
-// 세 게시판 모두 승인된 참여자와 관리자만 이용한다(라우트에서 확인). 이 모듈은 게시판별 권한과 공개 범위를 판단한다.
-// 질문과 답변의 '담당자만 보기' 글은 목록·검색·상세 어디서도 작성자와 관리자 외에는 조회되지 않게 SQL 조건으로 거른다.
+// 게시판: 공지사항(담당자 작성)·자유게시판(글·댓글)·질문과 답변(질문·답변).
+// 이용 대상: 로그인한 신청자(승인 대기 포함, 이용 중지 제외)와 담당자(라우트에서 확인). 이 모듈은 게시판별 권한과 공개 범위를 판단한다.
+// 질문과 답변의 '담당자에게 비공개' 글은 제목·내용·답변이 목록·검색·건수·상세 어디서도 작성자와 담당자 외에는 조회되지 않게
+// SQL 조건으로 거른다. 답변은 post_comments에 저장하고 담당자 답변은 화면에서 구분 표시한다.
 
 export const BOARDS = {
   notice: { title: '공지사항', write: '공지 쓰기' },
@@ -13,7 +14,7 @@ export const BOARDS = {
   qna: { title: '질문과 답변', write: '질문하기' },
 };
 
-export const VISIBILITY = { private: '담당자만 보기', members: '참여자에게 공개' };
+export const VISIBILITY = { private: '담당자에게 비공개', members: '로그인 사용자에게 공개' };
 export const PAGE_SIZE = 15;
 const TITLE_MAX = 120;
 const BODY_MAX = 10000;
@@ -31,8 +32,7 @@ export function authorLabel(row) {
 
 export function canWrite(user, board) {
   if (board === 'notice') return isAdminRole(user);
-  if (board === 'qna') return user.role === 'participant';
-  return true; // free: 승인된 참여자·관리자
+  return true; // 자유게시판·질문과 답변: 신청자·담당자
 }
 
 export function canEditPost(user, post) {
@@ -44,8 +44,13 @@ export function canDeletePost(user, post) {
   return isAdminRole(user) || post.author_id === user.id;
 }
 
+/** 댓글(자유게시판)·답변(질문과 답변). 비공개 질문은 볼 수 있는 사람(작성자·담당자)만 여기까지 온다. */
 export function canComment(user, post) {
-  return post.board === 'free';
+  return post.board === 'free' || post.board === 'qna';
+}
+
+export function isStaffAuthor(row) {
+  return row.author_role === 'staff' || row.author_role === 'manager';
 }
 
 export function canEditComment(user, comment) {
@@ -66,8 +71,10 @@ function likeEscape(q) {
   return `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
 }
 
-const POST_COLUMNS = `p.*, u.name AS author_name, u.role AS author_role, a.role AS answer_role,
-  (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count`;
+const POST_COLUMNS = `p.*, u.name AS author_name, u.role AS author_role,
+  (SELECT COUNT(*) FROM post_comments pc WHERE pc.post_id = p.id) AS comment_count,
+  (SELECT COUNT(*) FROM post_comments pc JOIN users cu ON cu.id = pc.author_id
+    WHERE pc.post_id = p.id AND cu.role IN ('staff', 'manager')) AS staff_answers`;
 
 export async function listPosts(db, board, user, { page = 1, q = '' } = {}) {
   const params = [board];
@@ -81,8 +88,7 @@ export async function listPosts(db, board, user, { page = 1, q = '' } = {}) {
   const total = (await get(db, `SELECT COUNT(*) AS n FROM posts p WHERE ${where}`, ...params)).n;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const current = Math.min(Math.max(1, page), pages);
-  const rows = await all(db, `SELECT ${POST_COLUMNS} FROM posts p LEFT JOIN users u ON u.id = p.author_id
-      LEFT JOIN users a ON a.id = p.answer_by WHERE ${where}
+  const rows = await all(db, `SELECT ${POST_COLUMNS} FROM posts p LEFT JOIN users u ON u.id = p.author_id WHERE ${where}
     ORDER BY CASE WHEN p.board = 'notice' THEN p.is_pinned ELSE 0 END DESC, p.created_at DESC, p.id DESC LIMIT ? OFFSET ?`,
   ...params, PAGE_SIZE, (current - 1) * PAGE_SIZE);
   return { rows, total, page: current, pages, q: query };
@@ -91,7 +97,7 @@ export async function listPosts(db, board, user, { page = 1, q = '' } = {}) {
 /** 볼 수 있는 글만 돌려준다(없거나 볼 수 없으면 null — 존재 여부도 드러내지 않음). */
 export async function getPost(db, board, id, user) {
   const params = [board, id];
-  return get(db, `SELECT ${POST_COLUMNS} FROM posts p LEFT JOIN users u ON u.id = p.author_id LEFT JOIN users a ON a.id = p.answer_by
+  return get(db, `SELECT ${POST_COLUMNS} FROM posts p LEFT JOIN users u ON u.id = p.author_id
     WHERE p.board = ? AND p.id = ? AND ${visibilityCond(user, params)}`, ...params);
 }
 
@@ -170,15 +176,4 @@ export async function deleteComment(db, user, comment) {
   const stmts = [stmt(db, 'DELETE FROM post_comments WHERE id = ?', comment.id)];
   if (comment.author_id !== user.id) stmts.push(auditStmt(db, user.id, 'comment.delete', 'comment', comment.id));
   await batch(db, stmts);
-}
-
-/** 질문과 답변: 관리자 답변 저장·삭제 */
-export async function setAnswer(db, user, post, text) {
-  const now = nowIso();
-  await run(db, 'UPDATE posts SET answer_body = ?, answer_by = ?, answered_at = COALESCE(answered_at, ?), updated_at = ? WHERE id = ?',
-    text, user.id, now, now, post.id);
-}
-
-export async function deleteAnswer(db, post) {
-  await run(db, 'UPDATE posts SET answer_body = NULL, answer_by = NULL, answered_at = NULL, updated_at = ? WHERE id = ?', nowIso(), post.id);
 }

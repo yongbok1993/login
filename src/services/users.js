@@ -116,20 +116,25 @@ export async function setAccountStatus(db, actorId, userId, status) {
 }
 
 /**
- * 전화번호 변경: 로그인 아이디이므로 담당자가 본인 확인 후 바꾼다(참여자 본인은 변경 불가).
- * 꼬모 연결은 해제하고 재확인 대상으로 돌리며, 가져온 상담 현황도 지운다. 그 사용자의 로그인 세션은 모두 종료한다.
+ * 전화번호(로그인 아이디) 변경. 본인(현재 비밀번호 재확인 후) 또는 담당자가 바꾼다.
+ * 계정 ID·비밀번호·승인 상태·신청기록(최초 신청 시각·접수번호)·게시물은 그대로 두고 번호만 바꾼다(새 신청을 만들지 않음).
+ * 담당자가 본인 확인 후 바꾸면 연락처 확인으로 기록하고, 본인이 바꾸면 미확인으로 돌린다(문자 인증이 없으므로).
+ * 꼬모 연결은 재확인 대상으로 돌리고 가져온 상담 현황을 지운다. 다른 로그인 세션은 종료한다(keepTokenHash 제외).
+ * 변경 전·후 번호는 담당자용 변경 기록(audit_log)에 남긴다. 같은 번호가 이미 있으면 false.
  */
-export async function changePhone(db, actorId, userId, newPhone) {
+export async function changePhone(db, actorId, userId, newPhone, { keepTokenHash = '', confirmed = false } = {}) {
   const now = nowIso();
+  const user = await getUser(db, userId);
+  if (!user) return false;
   try {
     await batch(db, [
       stmt(db, 'UPDATE users SET phone = ?, phone_verified_at = ?, phone_confirmed_at = ?, updated_at = ? WHERE id = ?',
-        newPhone, now, now, now, userId),
+        newPhone, now, confirmed ? now : null, now, userId),
       stmt(db, `UPDATE como_links SET status = 'needs_recheck', external_id = NULL, phone_at_link = NULL, candidates = NULL,
         detail = 'phone_changed', checked_at = ?, linked_at = NULL WHERE user_id = ?`, now, userId),
       stmt(db, 'DELETE FROM como_status WHERE user_id = ?', userId),
-      stmt(db, 'DELETE FROM auth_sessions WHERE user_id = ?', userId),
-      auditStmt(db, actorId, 'user.phone_change', 'user', userId),
+      stmt(db, 'DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?', userId, keepTokenHash || ''),
+      auditStmt(db, actorId, 'user.phone_change', 'user', userId, { from: user.phone, to: newPhone, by: actorId === userId ? 'self' : 'staff' }),
     ]);
   } catch (err) {
     if (isUniqueError(err)) return false;
@@ -199,7 +204,7 @@ export async function setInternalStatus(db, actorId, userId, status) {
   return true;
 }
 
-/** 승인·승인 해제. 승인 시 L 관계 프로그램 회차 자동 배정, 해제 시 예정 배정 취소. 하나의 batch로 원자적으로 처리한다. */
+/** 승인·승인 해제. 승인 시 O 관계망 형성(전체 참여) 프로그램 회차 자동 배정, 해제 시 예정 배정 취소. 하나의 batch로 원자적으로 처리한다. */
 export async function setSelected(db, actorId, userId, selected) {
   const user = await getUser(db, userId);
   if (!user || user.role !== 'participant') return null;
