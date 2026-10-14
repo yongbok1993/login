@@ -2,7 +2,7 @@
   "name": "login-in",
   "version": "0.1.0",
   "private": true,
-  "description": "로그人 — 용인종합사회복지관 북한이탈주민 지원사업 웹사이트",
+  "description": "LOGIN : 人 — 용인종합사회복지관 북한이탈주민 지원사업 웹사이트",
   "type": "module",
   "engines": {
     "node": ">=20"

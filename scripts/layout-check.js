@@ -8,7 +8,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { get } from '../src/lib/db.js';
 import { applyLocalMigrations, openLocalDb, pagesDevArgs, ROOT } from './local-d1.js';
-import { DEV_ADMIN, DEV_PIN, MOCK_COMO, seed } from './seed-dev.js';
+import { DEV_ADMIN, DEV_PASSWORD, MOCK_COMO, seed } from './seed-dev.js';
 
 const WIDTHS = [320, 360, 390, 430, 768, 1024, 1280];
 const PORT = 3300 + Math.floor(Math.random() * 500);
@@ -39,7 +39,7 @@ async function waitForServer() {
 async function login(page, phone) {
   await page.goto(`${BASE}/login`);
   await page.fill('#phone', phone);
-  await page.fill('#pin', DEV_PIN);
+  await page.fill('#password', DEV_PASSWORD);
   await page.click('button[type=submit].btn');
   await page.waitForURL((u) => !u.pathname.startsWith('/login'));
 }
@@ -90,48 +90,57 @@ async function check(page, url, label) {
   return problems.length;
 }
 
-// 카카오 우편번호 스크립트 대체본(이 환경에서는 외부 CDN에 접속할 수 없음). 실제 URL로 응답해 페이지 CSP가 그대로 적용된다.
-const POSTCODE_STUB = `window.daum = { Postcode: function (opts) {
-  this.embed = function (el) {
-    var b = document.createElement('button'); b.type = 'button'; b.id = 'stub-pick'; b.textContent = '선택';
-    b.onclick = function () { opts.oncomplete({ zonecode: '17101', roadAddress: '경기 용인시 처인구 이동읍 이원로 69-8',
-      address: '경기 용인시 처인구 이동읍 이원로 69-8', bname: '이동읍', buildingName: '', apartment: 'N' }); };
-    el.appendChild(b);
-  };
-} };`;
-
-async function checkAddressSearch(browser) {
+// 신청 화면: 비밀번호 보기/숨기기, 신청 후 신청 시각(초까지) 표시, 휴대전화 폭
+async function checkRegister(browser) {
   const problems = [];
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext({ viewport: { width: 360, height: 800 } });
   const page = await ctx.newPage();
   const cspErrors = [];
   page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) cspErrors.push(m.text()); });
-  await page.route('https://t1.daumcdn.net/**', (r) => r.fulfill({ contentType: 'text/javascript', body: POSTCODE_STUB }));
-  await page.setViewportSize({ width: 360, height: 800 });
   await page.goto(`${BASE}/register`);
-  await page.waitForSelector('#address-search:not([hidden])', { timeout: 5000 }).catch(() => problems.push('주소 검색 버튼이 나타나지 않음'));
-  if (!problems.length) {
-    await page.click('#address-search');
-    if (await page.isHidden('#postcode-layer')) problems.push('검색 창이 열리지 않음');
-    await page.click('#stub-pick');
-    const v = await page.evaluate(() => ({ zip: postcode.value, addr: address.value, hidden: document.getElementById('postcode-layer').hidden,
-      focus: document.activeElement && document.activeElement.id }));
-    if (v.zip !== '17101') problems.push(`우편번호 ${v.zip}`);
-    if (v.addr !== '경기 용인시 처인구 이동읍 이원로 69-8') problems.push(`주소 ${v.addr}`);
-    if (!v.hidden) problems.push('선택 후 검색 창이 닫히지 않음');
-    if (v.focus !== 'address_detail') problems.push(`선택 후 포커스 ${v.focus}`);
+  if (await page.isHidden('.pw-toggle[data-target="password"]')) problems.push('보기 버튼이 나타나지 않음');
+  await page.fill('#name', '화면검수');
+  await page.fill('#phone', '010-1234 9999');
+  await page.fill('#password', 'layout2026');
+  await page.click('.pw-toggle[data-target="password"]');
+  if ((await page.getAttribute('#password', 'type')) !== 'text') problems.push('보기를 눌러도 비밀번호가 보이지 않음');
+  await page.click('.pw-toggle[data-target="password"]');
+  if ((await page.getAttribute('#password', 'type')) !== 'password') problems.push('숨기기가 동작하지 않음');
+  await page.fill('#password_confirm', 'layout2026');
+  await page.check('input[name="consent"]');
+  await page.click('button[type=submit].btn');
+  await page.waitForURL((u) => u.pathname === '/register/done');
+  const text = await page.textContent('dl.application');
+  if (!/신청 시각\s*\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\s*이름\s*화면검수\s*전화번호\s*010-1234-9999\s*신청 상태\s*승인 대기/.test(text)) {
+    problems.push(`신청 완료 표시 순서·형식: ${text.replace(/\s+/g, ' ')}`);
   }
   if (cspErrors.length) problems.push(`CSP 위반: ${cspErrors[0]}`);
-  // 스크립트를 못 불러오면 버튼은 숨기고 직접 입력
-  const page2 = await ctx.newPage();
-  await page2.route('https://t1.daumcdn.net/**', (r) => r.abort());
-  await page2.goto(`${BASE}/register`);
-  await page2.waitForTimeout(300);
-  if (!(await page2.isHidden('#address-search'))) problems.push('스크립트 실패 시 버튼이 보임');
-  await page2.fill('#address', '직접 입력 주소');
-  if ((await page2.inputValue('#address')) !== '직접 입력 주소') problems.push('직접 입력 불가');
   await ctx.close();
-  console.log(`${problems.length ? '✗' : '✓'} 주소 검색(카카오 대체본)`);
+  console.log(`${problems.length ? '✗' : '✓'} 신청하기(비밀번호 보기·신청 시각)`);
+  for (const p of problems) console.log(`    ${p}`);
+  return problems.length;
+}
+
+// 인쇄(A4): 메뉴·버튼·장식이 빠지고 본문(신청정보)이 잘리지 않는지
+async function checkPrint(page) {
+  const problems = [];
+  await page.setViewportSize({ width: 1024, height: 900 });
+  await page.goto(`${BASE}/me/application`);
+  await page.emulateMedia({ media: 'print' });
+  const r = await page.evaluate(() => {
+    const vis = (sel) => [...document.querySelectorAll(sel)].some((el) => getComputedStyle(el).display !== 'none' && el.getBoundingClientRect().height > 0);
+    const dl = document.querySelector('dl.application');
+    return { header: vis('header.top'), footer: vis('footer'), buttons: vis('.btn'), nav: vis('nav'), summary: !!dl && dl.getBoundingClientRect().height > 0,
+      text: dl ? dl.textContent : '' };
+  });
+  if (r.header || r.footer || r.nav) problems.push('인쇄에 메뉴·머리말·꼬리말이 나옴');
+  if (r.buttons) problems.push('인쇄에 버튼이 나옴');
+  if (!r.summary || !/신청 시각[\s\S]*이름[\s\S]*전화번호[\s\S]*신청 상태/.test(r.text)) problems.push('인쇄 본문(신청정보) 누락');
+  const pdf = await page.pdf({ format: 'A4', printBackground: false });
+  if (pdf.length < 1000) problems.push('A4 PDF 생성 실패');
+  await page.emulateMedia({ media: 'screen' });
+  if (shotDir) fs.writeFileSync(path.join(shotDir, 'print-me-application-A4.pdf'), pdf);
+  console.log(`${problems.length ? '✗' : '✓'} 내 신청정보 A4 인쇄`);
   for (const p of problems) console.log(`    ${p}`);
   return problems.length;
 }
@@ -140,33 +149,42 @@ let failures = 0;
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || (fs.existsSync('/opt/pw-browsers/chromium') ? '/opt/pw-browsers/chromium' : undefined) });
 try {
   await waitForServer();
-  failures += await checkAddressSearch(browser);
-  // 외부 CDN 요청은 즉시 실패시켜 화면 검사 시간을 줄인다.
-  const blockCdn = (pg) => pg.route('https://t1.daumcdn.net/**', (r) => r.abort());
+  failures += await checkRegister(browser);
   const anon = await browser.newPage();
-  await blockCdn(anon);
-  for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/admin/login', 'admin-login'], ['/register', 'register'], ['/notices', 'notices'], ['/notices/1', 'notice']]) {
+  for (const [u, l] of [['/', 'home'], ['/login', 'login'], ['/admin/login', 'admin-login'], ['/register', 'register'],
+    ['/password/reset', 'password-reset'], ['/forms', 'forms']]) {
     failures += await check(anon, u, l);
   }
-  failures += await check(anon, '/account/pin', 'login-redirect');
+  failures += await check(anon, '/board/notice', 'login-redirect');
   const p = await browser.newPage();
-  await blockCdn(p);
   await login(p, '01000000001');
-  for (const [u, l] of [['/me', 'me'], ['/me/programs', 'me-programs'], ['/me/open/counseling', 'me-counseling'],
-    [`/me/grow/${growId}`, 'grow-confirm'], ['/me/profile', 'me-profile'], ['/me/phone', 'me-phone'], ['/account/pin', 'pin-change']]) {
+  const freeId = await p.evaluate(async () => {
+    const html = await (await fetch('/board/free')).text();
+    return (html.match(/href="\/board\/free\/(\d+)"/) || [])[1];
+  });
+  for (const [u, l] of [['/', 'home-member'], ['/me', 'me'], ['/me/programs', 'me-programs'], ['/me/open/counseling', 'me-counseling'],
+    [`/me/grow/${growId}`, 'grow-confirm'], ['/me/application', 'me-application'], ['/account/password', 'password-change'],
+    ['/board/notice', 'board-notice'], ['/board/free', 'board-free'], [`/board/free/${freeId}`, 'board-free-post'], ['/board/free/new', 'board-new'],
+    ['/board/qna', 'board-qna'], ['/board/qna/new', 'board-qna-new'], [`/board/free/${freeId}/delete`, 'board-delete']]) {
     failures += await check(p, u, l);
   }
   const unselected = await browser.newPage();
   await login(unselected, '01000000004');
-  failures += await check(unselected, '/me', 'me-unselected');
+  failures += await check(unselected, '/me', 'me-pending');
+  failures += await check(unselected, '/me/application', 'me-pending-application');
+  failures += await check(unselected, '/board/notice', 'pending-board');
+  failures += await check(unselected, '/board/qna/new', 'pending-qna-new');
+  failures += await check(unselected, '/me/programs', 'pending-programs-blocked');
+  failures += await checkPrint(unselected);
 
   const m = await browser.newPage();
   await adminLogin(m);
+  const qnaId = await m.evaluate(async () => ((await (await fetch('/board/qna')).text()).match(/href="\/board\/qna\/(\d+)"/) || [])[1]);
+  failures += await check(m, `/board/qna/${qnaId}`, 'admin-qna-answer');
   for (const [u, l] of [['/admin', 'admin'], ['/admin/participants', 'admin-participants'], ['/admin/participants/2', 'admin-participant'],
     ['/admin/programs', 'admin-programs'], ['/admin/programs/1', 'admin-program'], ['/admin/sessions/1', 'admin-session'],
     ['/admin/programs/new', 'admin-program-new'], ['/admin/link', 'admin-link'], ['/admin/como', 'admin-como'], ['/admin/audit', 'admin-audit'],
-    ['/admin/grow', 'admin-grow'], ['/admin/grow?status=all', 'admin-grow-all'], ['/admin/notices', 'admin-notices'],
-    ['/admin/notices/new', 'admin-notice-new'], ['/admin/staff', 'admin-staff'], ['/admin/account', 'admin-account'], [`/admin/sessions/${growId}`, 'admin-session-grow']]) {
+    ['/admin/grow', 'admin-grow'], ['/admin/grow?status=all', 'admin-grow-all'], ['/board/notice/new', 'admin-notice-new'], ['/admin/forms', 'admin-forms'], ['/admin/staff', 'admin-staff'], ['/admin/account', 'admin-account'], [`/admin/sessions/${growId}`, 'admin-session-grow']]) {
     failures += await check(m, u, l);
   }
 } finally {

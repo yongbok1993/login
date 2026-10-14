@@ -43,6 +43,22 @@ export function formatDateTime(iso) {
   return `${formatDate(`${parts.year}-${parts.month}-${parts.day}`)} ${parts.hour}:${parts.minute}`;
 }
 
+/** UTC ISO 시각 → 한국 시간 'YYYY-MM-DD HH:mm:ss'(초까지) */
+export function formatSeconds(iso) {
+  if (!iso) return '';
+  const t = new Date(iso);
+  if (Number.isNaN(t.getTime())) return '';
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(t).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`;
+}
+
+/** UTC ISO 시각 → 한국 시간 'YYYY-MM-DD HH:mm'(게시판 작성 시각) */
+export function formatShort(iso) {
+  return formatSeconds(iso).slice(0, 16);
+}
+
 export function formatTimeRange(start, end) {
   if (!start) return '';
   return end ? `${start}~${end}` : start;

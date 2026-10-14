@@ -6,25 +6,28 @@ import { Router } from './lib/router.js';
 import { purgeExpired, Session } from './lib/session.js';
 import { adminRoutes } from './routes/admin.js';
 import { adminAuthRoutes } from './routes/adminAuth.js';
-import { authRoutes } from './routes/auth.js';
+import { afterLoginPath, authRoutes } from './routes/auth.js';
+import { boardRoutes } from './routes/board.js';
+import { formRoutes } from './routes/forms.js';
 import { deny, redirect, render, respond } from './routes/helpers.js';
 import { meRoutes } from './routes/me.js';
-import { noticeRoutes } from './routes/notices.js';
 import { groupByTheme, listPrograms } from './services/programs.js';
-import { getUser, isAdminRole } from './services/users.js';
+import { canUseInternal, getUser, isAdminRole } from './services/users.js';
 import { homePage } from './views/public.js';
 
 const MAX_BODY = 20 * 1024;
+// 신청서·동의서 양식 업로드(담당자)만 multipart와 큰 본문을 받는다.
+const MAX_UPLOAD = 2 * 1024 * 1024;
+const UPLOAD_PATH = /^\/admin\/forms\/[a-z]+$/;
 
 const SECURITY_HEADERS = {
   'Content-Security-Policy': [
     "default-src 'self'",
-    // 카카오(다음) 우편번호 서비스: 스크립트·검색 창(iframe)
-    "script-src 'self' https://t1.daumcdn.net https://t1.kakaocdn.net",
-    'frame-src https://postcode.map.daum.net https://postcode.map.kakao.com',
+    "script-src 'self'",
+    "frame-src 'none'",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     'font-src https://fonts.gstatic.com',
-    "img-src 'self' data: https://t1.daumcdn.net https://t1.kakaocdn.net",
+    "img-src 'self' data:",
     "form-action 'self'",
     "frame-ancestors 'none'",
     "base-uri 'none'",
@@ -45,17 +48,28 @@ export function depsFromEnv(env) {
 function buildRouter() {
   const r = new Router();
   r.get('/healthz', (c) => respond(c, 'ok', { type: 'text/plain; charset=utf-8' }));
-  r.get('/', async (c) => render(c, homePage, groupByTheme(await listPrograms(c.db, { publicOnly: true })), 200, { session: !!c.user }));
+  // 첫 화면: 누구나 브랜드·짧은 영역 소개를 보고, 상세 프로그램 카드는 승인된 참여자와 관리자에게만 보여 준다.
+  r.get('/', async (c) => render(c, homePage,
+    canUseInternal(c.user) ? groupByTheme(await listPrograms(c.db, { publicOnly: true })) : null, 200, { session: !!c.user }));
   authRoutes(r);
-  noticeRoutes(r);
+  boardRoutes(r);
+  formRoutes(r);
   meRoutes(r);
   adminAuthRoutes(r);
   adminRoutes(r);
   return r;
 }
 
-async function parseBody(request) {
+async function parseBody(request, { allowUpload = false } = {}) {
   const type = request.headers.get('content-type') || '';
+  if (allowUpload && type.startsWith('multipart/form-data')) {
+    const out = { _files: {} };
+    for (const [k, v] of await request.formData()) {
+      if (typeof v === 'string') out[k] = v;
+      else out._files[k] = v;
+    }
+    return out;
+  }
   if (!type.startsWith('application/x-www-form-urlencoded')) return {};
   const text = await request.text();
   if (text.length > MAX_BODY) throw Object.assign(new Error('payload_too_large'), { status: 413 });
@@ -120,9 +134,10 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
 
       try {
         if (c.method === 'POST') {
+          const allowUpload = UPLOAD_PATH.test(c.path);
           const len = Number(request.headers.get('content-length') || 0);
-          if (len > MAX_BODY) return withHeaders(plainError(413, '요청이 너무 큽니다.'), deps.cfg);
-          c.body = await parseBody(request);
+          if (len > (allowUpload ? MAX_UPLOAD : MAX_BODY)) return withHeaders(plainError(413, '요청이 너무 큽니다.'), deps.cfg);
+          c.body = await parseBody(request, { allowUpload });
         }
         const match = router.match(c.method, c.path);
         let response = null;
@@ -131,12 +146,11 @@ export function createApp({ resolveDeps = depsFromEnv } = {}) {
 
         if (c.method === 'POST' && !c.session.checkCsrf(typeof c.body._csrf === 'string' ? c.body._csrf : '')) {
           response = await deny(c, 403, '요청이 만료되었습니다. 페이지를 새로 열어 다시 시도해 주세요.');
-        } else if (c.user && c.user.pin_must_change && !['/account/pin', '/logout'].includes(c.path)) {
-          // 관리자가 초기화한 임시 PIN으로 로그인했으면 새 PIN을 정할 때까지 다른 화면을 막는다.
-          response = redirect(c, '/account/pin', 302);
-        } else if (isAdminRole(c.user) && (!c.user.password_hash || c.user.password_must_change)
-          && !['/admin/account', '/logout'].includes(c.path)) {
-          // 관리자는 아이디·비밀번호를 정할 때까지(또는 임시 비밀번호를 바꿀 때까지) 다른 화면을 막는다.
+        } else if (c.user && !c.user.password_hash && !['/account/password', '/admin/account', '/logout'].includes(c.path)) {
+          // 기존 PIN 계정: 새 비밀번호(관리자는 아이디·비밀번호)를 정할 때까지 다른 화면을 막는다.
+          response = redirect(c, afterLoginPath(c.user), 302);
+        } else if (isAdminRole(c.user) && (c.user.password_must_change || !c.user.login_id) && !['/admin/account', '/logout'].includes(c.path)) {
+          // 관리자: 관리자 아이디를 만들 때까지(또는 임시 비밀번호를 바꿀 때까지) 다른 화면을 막는다.
           response = redirect(c, '/admin/account', 302);
         } else if (!match) {
           response = await deny(c, 404);

@@ -5,7 +5,7 @@ import { hmac, safeEqual } from './crypto.js';
 // Cloudflare Workers의 PBKDF2 반복 횟수 상한은 100,000이다.
 const enc = new TextEncoder();
 const ITERATIONS = 100000;
-const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // salt용
 
 function hex(buf) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -43,18 +43,12 @@ export function loginIdProblem(id) {
   return /^[a-z][a-z0-9_.-]{3,19}$/.test(id) ? null : '영문 소문자로 시작하는 4~20자(영문 소문자·숫자·_ . -)로 입력해 주세요.';
 }
 
-export function passwordProblem(pw, { loginId } = {}) {
+export function passwordProblem(pw, { loginId, phone } = {}) {
   if (typeof pw !== 'string' || pw.length < 8) return '8자 이상으로 입력해 주세요.';
   if (pw.length > 64) return '64자 이하로 입력해 주세요.';
   if (!/[A-Za-z]/.test(pw) || !/\d/.test(pw)) return '영문과 숫자를 함께 사용해 주세요.';
   if (/^(.)\1+$/.test(pw)) return '같은 문자 반복은 사용할 수 없습니다.';
   if (loginId && pw.toLowerCase().includes(loginId)) return '아이디를 포함할 수 없습니다.';
+  if (phone && pw.includes(phone.slice(-8))) return '휴대전화 번호는 포함할 수 없습니다.';
   return null;
-}
-
-/** 관리자 비밀번호 초기화용 임시 비밀번호(영문 소문자·숫자 12자) */
-export function temporaryPassword() {
-  let pw;
-  do pw = randomString(12); while (passwordProblem(pw));
-  return pw;
 }

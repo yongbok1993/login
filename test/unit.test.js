@@ -68,3 +68,14 @@ test('PIN 해시: 비밀키·솔트 사용, 원문 미포함, 검증', async () 
   assert.equal(await verifyPin('secret-1', '258147', null), false);
   assert.equal(await verifyPin('secret-1', '258147', 'garbage'), false);
 });
+
+test('신청 시각 표시: 한국시간 YYYY-MM-DD HH:mm:ss(초까지), 비밀번호 규칙', async () => {
+  const { formatSeconds } = await import('../src/lib/time.js');
+  const { passwordProblem } = await import('../src/lib/password.js');
+  assert.equal(formatSeconds('2026-10-13T01:02:03.456Z'), '2026-10-13 10:02:03');
+  assert.equal(formatSeconds('2026-12-31T15:00:00.000Z'), '2027-01-01 00:00:00');
+  assert.equal(formatSeconds('잘못된 값'), '');
+  for (const v of ['short1', 'onlyletters', '12345678', 'aaaaaaaa', 'x'.repeat(65) + '1']) assert.ok(passwordProblem(v), v);
+  assert.match(passwordProblem('ab12345678', { phone: '01012345678' }), /휴대전화 번호/);
+  assert.equal(passwordProblem('hello2026', { phone: '01012345678' }), null);
+});

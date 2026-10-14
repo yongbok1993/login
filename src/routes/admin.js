@@ -4,7 +4,6 @@ import { audit, listAudit } from '../services/audit.js';
 import {
   adminCancelEnrollment, assignManual, autoAssignLink, EnrollError, enrollmentsOf, growApplications, recordAttendance, setGrowSelection,
 } from '../services/enrollments.js';
-import { createNotice, deleteNotice, getNotice, listNotices, parseNoticeForm, updateNotice } from '../services/notices.js';
 import { safeEqual } from '../lib/crypto.js';
 import { recordAttempt, setupBlocked } from '../services/login.js';
 import { normalizePhone } from '../lib/phone.js';
@@ -14,10 +13,11 @@ import {
   parseSessionForm, sessionRoster, updateProgram, updateSession,
 } from '../services/programs.js';
 import {
-  claimFirstManager, confirmPhone, getRegistration, getUser, hasManager, listConsents, listRegistrants, listSelectedParticipants, listStaff, resetPin,
-  setInternalStatus, setRole, setSelected,
+  approvedCount, changePhone, claimFirstManager, confirmPhone, getApplication, getUser, hasManager, listConsents, listRegistrants,
+  listSelectedParticipants, listStaff, PARTICIPANT_CAP, setAccountStatus, setInternalStatus, setRole, setSelected,
 } from '../services/users.js';
-import { hashPin, pinProblem, temporaryPin } from '../lib/pin.js';
+import { issueResetCode } from '../services/passwordReset.js';
+import { hashPassword, passwordProblem } from '../lib/password.js';
 import { clearPhoneFailures } from '../services/login.js';
 import * as views from '../views/admin.js';
 import { deny, field, fieldList, intParam, redirect, render, requireManager, requireStaff } from './helpers.js';
@@ -27,7 +27,7 @@ export function adminRoutes(r) {
   const manager = requireManager;
 
   // ── 첫 관리자 지정: 전체 관리자가 한 명도 없을 때만. 로그인 없이 1회용 설정 코드 또는 SESSION_SECRET(Cloudflare 환경 변수 원문) 확인 후
-  //    이름·번호·새 PIN으로 관리자 계정을 만들거나, 이미 등록된 번호면 그 계정을 관리자로 바꾸고 PIN을 새로 정한다. ──
+  //    이름·번호·새 비밀번호로 관리자 계정을 만들거나, 이미 등록된 번호면 그 계정을 관리자로 바꾸고 비밀번호를 새로 정한다. ──
   const setupOpen = async (c) => ((await hasManager(c.db)) ? deny(c, 404) : null);
   const envReady = (c) => (c.cfg.envSecret || '').length >= 32;
   const setupReady = async (c) => envReady(c) || !!(await setupCodeHash(c.db));
@@ -42,15 +42,15 @@ export function adminRoutes(r) {
     if (!ok) return fail({ secret: '설정 코드가 맞지 않습니다.' });
     const name = values.name.trim();
     const phone = normalizePhone(values.phone);
-    const pin = field(c, 'pin');
+    const password = field(c, 'password');
     const errors = {};
     if (!name || name.length > 40) errors.name = '이름을 입력해 주세요.';
     if (!phone) errors.phone = '휴대전화 번호를 확인해 주세요.';
-    const problem = pinProblem(pin, { phone });
-    if (problem) errors.pin = problem;
-    else if (pin !== field(c, 'pin_confirm')) errors.pin_confirm = 'PIN이 서로 다릅니다.';
+    const problem = passwordProblem(password, { phone });
+    if (problem) errors.password = problem;
+    else if (password !== field(c, 'password_confirm')) errors.password_confirm = '비밀번호가 서로 다릅니다.';
     if (Object.keys(errors).length) return fail(errors);
-    const userId = await claimFirstManager(c.db, { name, phone, pinHash: await hashPin(c.cfg.sessionSecret, pin) });
+    const userId = await claimFirstManager(c.db, { name, phone, passwordHash: await hashPassword(c.cfg.sessionSecret, password) });
     if (!userId) return deny(c, 404);
     await clearPhoneFailures(c.db, phone);
     await c.session.regenerate(userId);
@@ -62,18 +62,23 @@ export function adminRoutes(r) {
     const n = async (sql) => (await get(c.db, sql)).n;
     return render(c, views.dashboardPage, {
       received: await n("SELECT COUNT(*) n FROM registrations WHERE internal_status IN ('received', 'reviewing')"),
-      selected: await n("SELECT COUNT(*) n FROM users WHERE role = 'participant' AND is_selected = 1"),
+      selected: await approvedCount(c.db),
+      cap: PARTICIPANT_CAP,
       programs: await n('SELECT COUNT(*) n FROM programs'),
       comoAttention: await n("SELECT COUNT(*) n FROM como_links WHERE status IN ('conflict', 'error', 'needs_recheck')"),
       growPending: await n("SELECT COUNT(*) n FROM enrollments WHERE status = 'active' AND selection = 'pending'"),
-      notices: await n('SELECT COUNT(*) n FROM notices'),
+      notices: await n("SELECT COUNT(*) n FROM posts WHERE board = 'notice'"),
+      unanswered: await n(`SELECT COUNT(*) n FROM posts p WHERE p.board = 'qna' AND NOT EXISTS (SELECT 1 FROM post_comments pc
+        JOIN users u ON u.id = pc.author_id WHERE pc.post_id = p.id AND u.role IN ('staff', 'manager'))`),
     });
   });
 
-  // ── 접수·선정 (전체 관리자) ──
+  // ── 신청자·승인 (전체 관리자). 최초 신청 시각 오름차순, 접수순서 표시. 승인은 담당자가 한 명씩 확인 후 한다. ──
   r.get('/admin/participants', manager, async (c) => {
     const status = c.query.get('status') || '';
-    return render(c, views.participantsPage, { rows: await listRegistrants(c.db, { status }), status });
+    return render(c, views.participantsPage, {
+      rows: await listRegistrants(c.db, { status }), status, approved: await approvedCount(c.db), cap: PARTICIPANT_CAP,
+    });
   });
 
   async function participant(c) {
@@ -87,7 +92,9 @@ export function adminRoutes(r) {
     if (!user) return deny(c, 404);
     return render(c, views.participantPage, {
       user,
-      registration: await getRegistration(c.db, user.id),
+      app: await getApplication(c.db, user.id),
+      approved: await approvedCount(c.db),
+      cap: PARTICIPANT_CAP,
       consents: await listConsents(c.db, user.id),
       enrollments: await enrollmentsOf(c.db, user.id),
       link: await getLink(c.db, user.id),
@@ -101,8 +108,12 @@ export function adminRoutes(r) {
     if (!user) return deny(c, 404);
     const selected = field(c, 'selected') === '1';
     const result = await setSelected(c.db, c.user.id, user.id, selected);
+    if (result && result.cap) {
+      await c.session.flash('error', `승인된 참여자가 이미 ${PARTICIPANT_CAP}명입니다. 다른 참여자의 승인을 해제한 뒤 승인해 주세요.`);
+      return redirect(c, `/admin/participants/${user.id}`);
+    }
     if (selected && c.como.configured) await checkLink(c.db, c.como, await getUser(c.db, user.id), c.user.id);
-    await c.session.flash('ok', selected ? `선정했습니다. Link 배정 ${result.created + result.restored}건` : '선정을 해제했습니다.');
+    await c.session.flash('ok', selected ? `승인했습니다. 관계망 회차 배정 ${result.created + result.restored}건` : '승인을 해제했습니다.');
     return redirect(c, `/admin/participants/${user.id}`);
   });
 
@@ -114,15 +125,44 @@ export function adminRoutes(r) {
     return redirect(c, `/admin/participants/${user.id}`);
   });
 
-  // PIN 초기화: 기관이 본인 확인 후 실행. 임시 PIN은 이 화면에서 한 번만 보여 준다.
-  r.post('/admin/participants/:id/pin-reset', manager, async (c) => {
+  // 이용 중지·재개
+  r.post('/admin/participants/:id/account', manager, async (c) => {
     const user = await participant(c);
     if (!user) return deny(c, 404);
-    const pin = temporaryPin();
-    await resetPin(c.db, c.user.id, user.id, await hashPin(c.cfg.sessionSecret, pin));
-    await clearPhoneFailures(c.db, user.phone);
-    await c.session.flash('ok', `임시 PIN: ${pin} — 본인에게 전달해 주세요. 첫 로그인 때 새 PIN으로 바꾸게 됩니다.`);
+    const result = await setAccountStatus(c.db, c.user.id, user.id, field(c, 'account_status'));
+    const msg = { ok: '저장되었습니다.', cap: `승인된 참여자가 이미 ${PARTICIPANT_CAP}명이라 이용을 재개할 수 없습니다.`,
+      invalid: '잘못된 요청입니다.', not_found: '참여자를 찾을 수 없습니다.' }[result];
+    await c.session.flash(result === 'ok' ? 'ok' : 'error', msg);
     return redirect(c, `/admin/participants/${user.id}`);
+  });
+
+  // 전화번호(로그인 아이디) 변경: 담당자가 본인 확인 후
+  r.post('/admin/participants/:id/phone', manager, async (c) => {
+    const user = await participant(c);
+    if (!user) return deny(c, 404);
+    const phone = normalizePhone(field(c, 'phone'));
+    if (!phone) {
+      await c.session.flash('error', '휴대전화 번호를 확인해 주세요.');
+    } else if (phone === user.phone) {
+      await c.session.flash('error', '지금 번호와 같습니다.');
+    } else if (!(await changePhone(c.db, c.user.id, user.id, phone, { confirmed: true }))) {
+      await c.session.flash('error', '이미 다른 계정이 쓰는 번호입니다.');
+    } else {
+      await c.session.flash('ok', '전화번호를 바꿨습니다. 본인은 새 번호와 기존 비밀번호로 로그인합니다.');
+    }
+    return redirect(c, `/admin/participants/${user.id}`);
+  });
+
+  // 비밀번호 재설정 코드: 본인 확인 후 발급. 코드는 이 화면에서 한 번만 보여 주며, 담당자는 비밀번호를 보거나 정하지 않는다.
+  r.post('/admin/users/:id/reset-code', manager, async (c) => {
+    const id = intParam(c.params.id);
+    const target = id && (await getUser(c.db, id));
+    if (!target || target.id === c.user.id) return deny(c, 404);
+    const code = await issueResetCode(c.db, c.user.id, target.id);
+    await clearPhoneFailures(c.db, `reset:${target.phone}`);
+    await c.session.flash('ok', `${target.name}님 재설정 코드: ${code} (24시간, 1회용) — 본인 확인 후 전달해 주세요. `
+      + '본인이 [로그인 → 재설정 코드로 비밀번호 바꾸기]에서 새 비밀번호를 정합니다.');
+    return redirect(c, field(c, 'back') === 'staff' ? '/admin/staff' : `/admin/participants/${target.id}`);
   });
 
   r.post('/admin/participants/:id/confirm-phone', manager, async (c) => {
@@ -147,41 +187,9 @@ export function adminRoutes(r) {
 
   r.get('/admin/staff', manager, async (c) => render(c, views.staffPage, await listStaff(c.db)));
 
-  // ── 공지 ──
-  r.get('/admin/notices', staff, async (c) => render(c, views.noticesAdminPage, await listNotices(c.db)));
-  r.get('/admin/notices/new', staff, (c) => render(c, views.noticeFormPage, { values: { audience: 'public' } }));
-  r.post('/admin/notices/new', staff, async (c) => {
-    const { value, errors } = parseNoticeForm(c.body);
-    if (Object.keys(errors).length) return render(c, views.noticeFormPage, { values: value, errors }, 422);
-    await createNotice(c.db, c.user.id, value);
-    await c.session.flash('ok', '공지를 등록했습니다.');
-    return redirect(c, '/admin/notices');
-  });
-  async function notice(c) {
-    const id = intParam(c.params.id);
-    return (id && (await getNotice(c.db, id))) || null;
-  }
-  r.get('/admin/notices/:id', staff, async (c) => {
-    const n = await notice(c);
-    if (!n) return deny(c, 404);
-    return render(c, views.noticeFormPage, { notice: n, values: n });
-  });
-  r.post('/admin/notices/:id', staff, async (c) => {
-    const n = await notice(c);
-    if (!n) return deny(c, 404);
-    const { value, errors } = parseNoticeForm(c.body);
-    if (Object.keys(errors).length) return render(c, views.noticeFormPage, { notice: n, values: value, errors }, 422);
-    await updateNotice(c.db, c.user.id, n.id, value);
-    await c.session.flash('ok', '저장했습니다.');
-    return redirect(c, '/admin/notices');
-  });
-  r.post('/admin/notices/:id/delete', staff, async (c) => {
-    const n = await notice(c);
-    if (!n) return deny(c, 404);
-    await deleteNotice(c.db, c.user.id, n.id);
-    await c.session.flash('ok', '삭제했습니다.');
-    return redirect(c, '/admin/notices');
-  });
+  // ── 공지: 게시판(공지사항)으로 옮김 ──
+  r.get('/admin/notices', staff, (c) => redirect(c, '/board/notice', 301));
+  r.get('/admin/notices/new', staff, (c) => redirect(c, '/board/notice/new', 301));
 
   // ── Grow 희망 신청 선정 ──
   r.get('/admin/grow', staff, async (c) => {
@@ -204,7 +212,7 @@ export function adminRoutes(r) {
   });
 
   // ── 프로그램·회차 ──
-  r.get('/admin/programs', staff, async (c) => render(c, views.programsPage, await listPrograms(c.db)));
+  r.get('/admin/programs', staff, async (c) => render(c, views.programsPage, await listPrograms(c.db, { includeArchived: true })));
 
   r.get('/admin/programs/new', staff, (c) => render(c, views.programNewPage, { values: { theme: 'G', assign_mode: 'select', is_public: 1 } }));
 

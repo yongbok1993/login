@@ -29,7 +29,7 @@ export function adminLoginForm(ctx, { loginId = '', error }) {
       <button type="submit" class="btn">로그인</button>
     </form>
     <p class="aside-link">참여자는 <a href="/login">휴대전화 번호로 로그인</a></p>
-    <p class="aside-link">비밀번호를 잊은 경우 전체 관리자에게 초기화를 요청해 주세요.</p>`);
+    <p class="aside-link">비밀번호를 잊은 경우 전체 관리자에게 재설정 코드를 요청한 뒤 <a href="/password/reset">재설정 코드로 비밀번호 바꾸기</a>를 이용해 주세요.</p>`);
 }
 
 /**
@@ -39,10 +39,11 @@ export function adminLoginForm(ctx, { loginId = '', error }) {
 export function adminAccountForm(ctx, { values = {}, errors = {} }) {
   const u = ctx.user;
   const first = !u.password_hash;
-  const forced = first || !!u.password_must_change;
+  const noId = !u.login_id;
+  const forced = first || noId || !!u.password_must_change;
   const currentLabel = first ? '현재 PIN 6자리' : u.password_must_change ? '임시 비밀번호' : '현재 비밀번호';
-  return page(ctx, first ? '관리자 아이디·비밀번호 만들기' : '아이디·비밀번호 변경', html`
-    ${forced ? html`<p class="flash info" role="status">${first
+  return page(ctx, first || noId ? '관리자 아이디·비밀번호 만들기' : '아이디·비밀번호 변경', html`
+    ${forced ? html`<p class="flash info" role="status">${first || noId
       ? '관리자는 아이디와 비밀번호로 로그인합니다. 사용할 아이디와 비밀번호를 정해 주세요. 이후에는 관리자 로그인 화면을 이용합니다.'
       : '임시 비밀번호로 로그인했습니다. 새 비밀번호를 정해 주세요.'}</p>` : ''}
     ${errorSummary(errors)}

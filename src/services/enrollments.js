@@ -14,11 +14,11 @@ export class EnrollError extends Error {
   }
 }
 
-const LINK_PAIRS = `u.is_selected = 1 AND u.role = 'participant' AND p.assign_mode = 'auto' AND s.is_cancelled = 0
+const LINK_PAIRS = `u.is_selected = 1 AND u.account_status = 'active' AND u.role = 'participant' AND p.assign_mode = 'auto' AND s.is_cancelled = 0
   AND (?2 IS NULL OR u.id = ?2) AND (?3 IS NULL OR s.id = ?3)`;
 
 /**
- * Link 자동 배정 문장(batch용): 선정된 참여자 × Link(auto) 프로그램의 모든 회차.
+ * 관계망 자동 배정 문장(batch용): 승인된 참여자 × 전체 참여(auto) 프로그램의 모든 회차.
  * UNIQUE(user_id, session_id)로 재실행해도 중복이 생기지 않는다.
  * 선정 해제로 취소된 배정만 다시 활성화하고, 관리자가 개별 취소한 배정은 되살리지 않는다.
  * 자동 배정은 출석 처리가 아니다.
@@ -55,7 +55,7 @@ export async function growApplyBlocker(db, user, sessionId) {
       (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND ${counted('e')}) AS active_count
     FROM program_sessions s JOIN programs p ON p.id = s.program_id WHERE s.id = ?`, sessionId);
   if (!s || s.assign_mode !== 'select') return 'not_found';
-  if (!user.is_selected || user.role !== 'participant') return 'forbidden';
+  if (!user.is_selected || user.account_status !== 'active' || user.role !== 'participant') return 'forbidden';
   if (s.is_cancelled) return 'cancelled';
   if (s.is_closed) return 'closed';
   if (s.date && s.date < todaySeoul()) return 'past';
@@ -75,7 +75,7 @@ export async function applyGrow(db, user, sessionId) {
     SELECT ?1, s.id, 'select', 'active', 'pending', ?2 FROM program_sessions s JOIN programs p ON p.id = s.program_id
     WHERE s.id = ?3 AND p.assign_mode = 'select' AND s.is_cancelled = 0 AND s.is_closed = 0
       AND (s.date IS NULL OR s.date >= ?4)
-      AND EXISTS (SELECT 1 FROM users u WHERE u.id = ?1 AND u.is_selected = 1 AND u.role = 'participant')
+      AND EXISTS (SELECT 1 FROM users u WHERE u.id = ?1 AND u.is_selected = 1 AND u.account_status = 'active' AND u.role = 'participant')
       AND (s.capacity IS NULL OR (SELECT COUNT(*) FROM enrollments e WHERE e.session_id = s.id AND ${counted('e')}) < s.capacity)
     ON CONFLICT(user_id, session_id) DO UPDATE SET status = 'active', source = 'select', selection = 'pending', decided_at = NULL,
       cancel_reason = NULL, cancelled_at = NULL, created_at = excluded.created_at
@@ -136,14 +136,14 @@ export function growApplications(db, { status = 'pending' } = {}) {
     ORDER BY p.sort_order, s.date IS NULL, s.date, s.round_no, e.created_at`, status);
 }
 
-/** 관리자 배정(O 마음·캠페인 등 manual 프로그램). 선정된 참여자만 배정된다. */
+/** 관리자 배정(사례관리·평가회 등 manual 프로그램). 승인된 참여자만 배정된다. */
 export async function assignManual(db, actorId, sessionId, userIds) {
   const s = await get(db, `SELECT p.assign_mode FROM program_sessions s JOIN programs p ON p.id = s.program_id WHERE s.id = ?`, sessionId);
   if (!s || s.assign_mode !== 'manual') throw new EnrollError('not_found');
   const [res] = await batch(db, [
     stmt(db, `INSERT INTO enrollments (user_id, session_id, source, status, created_at)
       SELECT u.id, ?1, 'manual', 'active', ?2 FROM users u
-      WHERE u.id IN (SELECT value FROM json_each(?3)) AND u.is_selected = 1 AND u.role = 'participant'
+      WHERE u.id IN (SELECT value FROM json_each(?3)) AND u.is_selected = 1 AND u.account_status = 'active' AND u.role = 'participant'
       ON CONFLICT(user_id, session_id) DO UPDATE SET status = 'active', cancel_reason = NULL, cancelled_at = NULL
       WHERE enrollments.status = 'cancelled'`, sessionId, nowIso(), JSON.stringify(userIds)),
     auditStmt(db, actorId, 'enrollment.assign', 'session', sessionId, { userIds }),

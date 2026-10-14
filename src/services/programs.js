@@ -13,9 +13,11 @@ export const ASSIGN_MODES = {
 
 const THEME_ORDER = "CASE theme WHEN 'L' THEN 1 WHEN 'O' THEN 2 WHEN 'G' THEN 3 ELSE 4 END";
 
-export function listPrograms(db, { publicOnly = false } = {}) {
+/** 프로그램 목록. 지난 계획으로 보관(archived_at)된 프로그램은 관리자 목록(includeArchived)에서만 보인다. */
+export function listPrograms(db, { publicOnly = false, includeArchived = false } = {}) {
+  const where = [publicOnly ? 'is_public = 1' : '', includeArchived ? '' : 'archived_at IS NULL'].filter(Boolean);
   return all(db, `SELECT p.*, (SELECT COUNT(*) FROM program_sessions s WHERE s.program_id = p.id) AS session_count
-    FROM programs p ${publicOnly ? 'WHERE is_public = 1' : ''} ORDER BY ${THEME_ORDER}, sort_order, id`);
+    FROM programs p ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${THEME_ORDER}, sort_order, id`);
 }
 
 export function getProgram(db, id) {
@@ -119,8 +121,8 @@ export function parseSessionForm(body) {
 }
 
 /**
- * 회차 생성. Link(auto) 프로그램이면 선정된 참여자에게 바로 배정한다.
- * 배정은 재실행해도 중복되지 않으므로, 중간에 실패하면 'Link 배정'에서 다시 실행하면 된다.
+ * 회차 생성. O 관계망 형성(auto) 프로그램이면 승인된 참여자에게 바로 배정한다.
+ * 배정은 재실행해도 중복되지 않으므로, 중간에 실패하면 '관계망 자동 배정'에서 다시 실행하면 된다.
  */
 export async function createSession(db, actorId, programId, s) {
   const now = nowIso();
