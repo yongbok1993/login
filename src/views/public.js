@@ -90,12 +90,20 @@ export function homePage(ctx, groups) {
     <div class="wrap">
       <div class="sec-head"><h2>참여 안내</h2></div>
       <div class="guide-grid">
-        <div class="card">
+        <div class="card guide-intro">
+          <h3 class="card-title">사업 소개</h3>
+          <p class="intro-title">${SITE.serviceName} — 사람과 사람을 잇는 연결의 시작</p>
+          <p>북한이탈주민이 마음을 나눌 이웃을 만나고 지역사회에 안정적으로 정착할 수 있도록 돕는 사업입니다.</p>
+          <p>전문 상담과 맞춤형 지원을 비롯해 요리교실, 계절 행사, 나들이, 자조모임 등 다양한 활동을 진행합니다.
+            지역주민과 함께 교류하고 진로 탐색 및 체험활동에 참여하며 새로운 관계를 맺고 자신의 가능성을 발견할 수 있도록 지원합니다.</p>
+          <p class="intro-close">혼자가 아닌 함께, 지역사회 안에서 새로운 연결을 시작합니다.</p>
+        </div>
+        <div class="card guide-target">
           <h3 class="card-title">참여 대상</h3>
           <p>북한이탈주민</p>
           <p class="small muted">자세한 참여 기준은 ${SITE.orgName}(${SITE.tel})에 문의해 주세요. 승인된 참여자는 최대 ${PARTICIPANT_CAP}명입니다.</p>
         </div>
-        <div class="card">
+        <div class="card guide-steps">
           <h3 class="card-title">신청·선정 절차</h3>
           <ol class="steps">
             <li><b>참여 신청</b> 이름·휴대전화 번호·비밀번호를 입력하고 동의하면 접수됩니다. 신청 시각은 자동으로 기록됩니다.</li>
@@ -104,12 +112,12 @@ export function homePage(ctx, groups) {
             <li><b>참여</b> 승인되면 프로그램 안내와 나의 현황을 이용할 수 있습니다.</li>
           </ol>
         </div>
-        <div class="card">
+        <div class="card guide-forms">
           <h3 class="card-title">신청서·동의서</h3>
           <p>프로그램 신청서와 개인정보 활용 동의서를 내려받거나 인쇄할 수 있습니다.</p>
           <p class="actions"><a class="btn ghost" href="/forms">신청서·동의서 보기</a></p>
         </div>
-        <div class="card">
+        <div class="card guide-contact">
           <h3 class="card-title">문의</h3>
           <p><b>${SITE.orgName}</b></p>
           <p>전화 <a href="tel:${SITE.tel}">${SITE.tel}</a></p>
