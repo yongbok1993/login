@@ -79,10 +79,10 @@ export function layout(ctx, { title, body, area = 'public', scripts = [] }) {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title ? `${title} | ` : ''}${SITE.serviceName}</title>
-<meta name="description" content="${SITE.serviceName} · ${SITE.orgName} ${SITE.projectName}">
+<meta name="description" content="${SITE.serviceName} · ${SITE.orgName} ${SITE.programLabel} — ${SITE.projectName}">
 <meta property="og:site_name" content="${SITE.serviceName}">
 <meta property="og:title" content="${title ? `${title} | ` : ''}${SITE.serviceName}">
-<meta property="og:description" content="${SITE.orgName} ${SITE.projectName}">
+<meta property="og:description" content="${SITE.orgName} ${SITE.programLabel} — ${SITE.projectName}">
 <meta property="og:type" content="website">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -108,6 +108,7 @@ ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
 <footer>
   <div class="wrap">
     <div class="brand" role="img" aria-label="${SITE.serviceName}">${wordmark()}</div>
+    <p class="footer-program">${SITE.programLabel}</p>
     <p><b>${SITE.orgName}</b> · ${SITE.address} · TEL ${SITE.tel}</p>
   </div>
 </footer>

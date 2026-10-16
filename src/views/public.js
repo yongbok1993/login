@@ -36,6 +36,13 @@ export function programCards(groups) {
   </div>`;
 }
 
+/** '2026년 기획 ‘북한이탈주민 지원사업’' — 좁은 화면에서도 따옴표 안의 사업명은 한 줄로 */
+function programLabel() {
+  const i = SITE.programLabel.indexOf('‘');
+  if (i < 0) return SITE.programLabel;
+  return html`${SITE.programLabel.slice(0, i)}<span class="nowrap">${SITE.programLabel.slice(i)}</span>`;
+}
+
 function heroButtons(ctx) {
   const u = ctx.user;
   if (!u) return html`<a class="btn" href="/register">참여 신청</a><a class="btn ghost" href="/login">로그인</a>`;
@@ -50,6 +57,7 @@ export function homePage(ctx, groups) {
     <div class="wrap">
       <div>
         <p class="eyebrow">${SITE.orgName}</p>
+        <p class="program-label">${programLabel()}</p>
         <h1 class="wordmark">${wordmark()}</h1>
         <p class="lead">${SITE.orgName}의 ${SITE.projectName}입니다.</p>
         <p class="themes-line">
@@ -110,7 +118,7 @@ export function homePage(ctx, groups) {
       ${ctx.user ? '' : html`<p class="actions"><a class="btn" href="/register">참여 신청</a><a class="btn ghost" href="/login">로그인</a></p>`}
     </div>
   </section>`;
-  return layout(ctx, { title: '', body });
+  return layout(ctx, { title: SITE.programLabel, body });
 }
 
 export function errorPage(ctx, status, message) {

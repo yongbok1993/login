@@ -17,7 +17,10 @@ test('첫 화면: 비로그인은 LOGIN : 人 브랜드·사업 소개·네 영�
   const r = await app.client().get('/');
   assert.equal(r.status, 200);
   assert.match(r.text, /<h1 class="wordmark">LOGIN<span class="colon"> : <\/span><em>人<\/em><\/h1>/);
-  assert.match(r.text, /<title>LOGIN : 人<\/title>/);
+  assert.match(r.text, /<title>2026년 기획 ‘북한이탈주민 지원사업’ \| LOGIN : 人<\/title>/);
+  assert.match(r.text, /<p class="program-label">2026년 기획 <span class="nowrap">‘북한이탈주민 지원사업’<\/span><\/p>/, '첫 화면 사업명');
+  assert.match(r.text, /<meta name="description" content="[^"]*2026년 기획 ‘북한이탈주민 지원사업’/);
+  assert.match(r.text, /<p class="footer-program">2026년 기획 ‘북한이탈주민 지원사업’<\/p>/, '하단');
   assert.match(r.text, /property="og:site_name" content="LOGIN : 人"/);
   assert.match(r.text, /<a class="brand" href="\/" aria-label="LOGIN : 人 처음으로">/);
   assert.match(r.text, /<div class="brand" role="img" aria-label="LOGIN : 人">/, '하단 로고');
