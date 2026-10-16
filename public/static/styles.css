@@ -14,6 +14,7 @@
   --g-soft:#E4EADB;
   --in:#55608A;
   --in-soft:#E3E6EF;
+  --mhcp:#B8862B;
   --error:#A3341A;
   --disp:'Gowun Batang', serif;
   --ui:'Gowun Dodum', sans-serif;
@@ -313,9 +314,20 @@ fieldset.field{border:0}
 .area-title{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
 .area-title .area-name{font-family:var(--disp);font-size:22px;font-weight:700}
 .area-title .area-ko{font-family:var(--ui);font-size:16px;font-weight:500;color:var(--ink-soft)}
-.areas-head{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:28px;row-gap:6px;margin-bottom:36px}
-.areas-head h2{margin-bottom:0}
-.mhcp-note{font-family:var(--ui);font-size:15px;color:var(--l);word-break:keep-all;overflow-wrap:anywhere}
+/* 네 영역(기존 간격 22px) 옆에 조금 더 띄운 MHCP 안내 칸 */
+.areas-row{display:grid;grid-template-columns:minmax(0,1fr);row-gap:32px}
+.log-card.mhcp::before{background:var(--mhcp)}
+.stamp.mhcp{border-color:var(--mhcp);color:var(--mhcp);transform:rotate(-3deg)}
+.log-card.mhcp .area-ko{font-size:14px;line-height:1.45;word-break:keep-all}
+.mhcp-status{display:inline-block;margin-top:4px;padding:6px 12px;border-radius:999px;background:#F6EBD3;color:#6E5110;font-family:var(--ui);font-size:14.5px;font-weight:500}
+/* 넓은 화면: 다섯 칸 같은 너비. 빈 0px 열을 하나 끼워 MHCP 칸 앞 간격만 두 배(44px)로 */
+@media (min-width:1101px){
+  .areas-row{grid-template-columns:repeat(4,minmax(0,1fr)) 0 minmax(0,1fr);column-gap:22px;align-items:stretch}
+  .areas-row > .log-grid.four{display:contents}
+  .areas-row > .log-card.mhcp{grid-column:6}
+  .areas-row .log-card{padding:28px 18px}
+  .areas-row .area-title .area-name{font-size:18px;white-space:nowrap}
+}
 .area-desc{font-size:16.5px;line-height:1.75;word-break:keep-all}
 .log-card .desc{display:block;font-size:14px;color:var(--ink-soft);margin-top:4px;word-break:keep-all}
 .lead{font-size:18px;line-height:1.7;margin-bottom:22px;word-break:keep-all;max-width:36em}
