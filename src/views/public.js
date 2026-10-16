@@ -100,8 +100,8 @@ export function homePage(ctx, groups) {
         </div>
         <div class="card guide-target">
           <h3 class="card-title">참여 대상</h3>
-          <p>북한이탈주민</p>
-          <p class="small muted">자세한 참여 기준은 ${SITE.orgName}(${SITE.tel})에 문의해 주세요. 승인된 참여자는 최대 ${PARTICIPANT_CAP}명입니다.</p>
+          <p class="target-main">중위소득 100% 이하 용인시에 거주 중인 북한이탈주민</p>
+          <p class="small muted">승인된 참여자는 최대 ${PARTICIPANT_CAP}명입니다. 궁금한 점은 ${SITE.orgName}(${SITE.tel})에 문의해 주세요.</p>
         </div>
         <div class="card guide-steps">
           <h3 class="card-title">신청·선정 절차</h3>
@@ -115,6 +115,10 @@ export function homePage(ctx, groups) {
         <div class="card guide-forms">
           <h3 class="card-title">신청서·동의서</h3>
           <p>프로그램 신청서와 개인정보 활용 동의서를 내려받거나 인쇄할 수 있습니다.</p>
+          <div class="privacy-note">
+            <p class="privacy-title"><span aria-hidden="true">🔒</span> 소중한 개인정보를 안전하게 보호합니다.</p>
+            <p class="small">작성한 신청서와 동의서는 작성자 본인과 관리자만 확인할 수 있습니다.</p>
+          </div>
           <p class="actions"><a class="btn ghost" href="/forms">신청서·동의서 보기</a></p>
         </div>
         <div class="card guide-contact">

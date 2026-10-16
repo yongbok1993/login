@@ -322,6 +322,10 @@ fieldset.field{border:0}
   grid-template-areas:"intro steps" "target steps" "forms contact"}
 .guide-intro{grid-area:intro}.guide-target{grid-area:target}.guide-steps{grid-area:steps;align-self:stretch}
 .guide-forms{grid-area:forms;align-self:stretch}.guide-contact{grid-area:contact;align-self:stretch}
+.target-main{font-weight:500;word-break:keep-all;margin-bottom:8px}
+.privacy-note{margin:12px 0 4px;padding:12px 14px;border-radius:10px;background:var(--paper-2);border:1px solid var(--line);word-break:keep-all}
+.privacy-note p{margin:0}
+.privacy-note .privacy-title{font-weight:600;margin-bottom:4px}
 .guide-intro p{word-break:keep-all;margin-bottom:10px}
 .guide-intro .intro-title{font-family:var(--disp);font-weight:700;font-size:20px;margin-bottom:12px}
 .guide-intro .intro-close{font-weight:500;margin-bottom:0}
