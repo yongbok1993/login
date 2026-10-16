@@ -318,7 +318,13 @@ fieldset.field{border:0}
 .area-desc{font-size:16.5px;line-height:1.75;word-break:keep-all}
 .log-card .desc{display:block;font-size:14px;color:var(--ink-soft);margin-top:4px;word-break:keep-all}
 .lead{font-size:18px;line-height:1.7;margin-bottom:22px;word-break:keep-all;max-width:36em}
-.guide-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start}
+.guide-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start;
+  grid-template-areas:"intro steps" "target steps" "forms contact"}
+.guide-intro{grid-area:intro}.guide-target{grid-area:target}.guide-steps{grid-area:steps;align-self:stretch}
+.guide-forms{grid-area:forms;align-self:stretch}.guide-contact{grid-area:contact;align-self:stretch}
+.guide-intro p{word-break:keep-all;margin-bottom:10px}
+.guide-intro .intro-title{font-family:var(--disp);font-weight:700;font-size:20px;margin-bottom:12px}
+.guide-intro .intro-close{font-weight:500;margin-bottom:0}
 .guide-grid .card{margin-bottom:0}
 .steps{padding-left:22px}
 .steps li{margin-bottom:12px;word-break:keep-all}
@@ -327,6 +333,7 @@ fieldset.field{border:0}
 .form-status{font-family:var(--ui);font-size:15px}
 @media (max-width:720px){
   .guide-grid,.forms-grid{grid-template-columns:minmax(0,1fr)}
+  .guide-grid{grid-template-areas:"intro" "target" "steps" "forms" "contact"}
 }
 
 /* 인쇄(A4): 메뉴·버튼·장식 제외, 본문만 */
