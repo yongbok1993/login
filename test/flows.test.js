@@ -17,10 +17,10 @@ test('첫 화면: 비로그인은 LOGIN : 人 브랜드·사업 소개·네 영�
   const r = await app.client().get('/');
   assert.equal(r.status, 200);
   assert.match(r.text, /<h1 class="wordmark">LOGIN<span class="colon"> : <\/span><em>人<\/em><\/h1>/);
-  assert.match(r.text, /<title>2026년 기획 ‘북한이탈주민 지원사업’ \| LOGIN : 人<\/title>/);
-  assert.match(r.text, /<p class="program-label">2026년 기획 <span class="nowrap">‘북한이탈주민 지원사업’<\/span><\/p>/, '첫 화면 사업명');
-  assert.match(r.text, /<meta name="description" content="[^"]*2026년 기획 ‘북한이탈주민 지원사업’/);
-  assert.match(r.text, /<p class="footer-program">2026년 기획 ‘북한이탈주민 지원사업’<\/p>/, '하단');
+  assert.match(r.text, /<title>사회복지공동모금회 2026년 기획 ‘북한이탈주민 지원사업’ \| LOGIN : 人<\/title>/);
+  assert.match(r.text, /<p class="program-label">사회복지공동모금회 2026년 기획 <span class="nowrap">‘북한이탈주민 지원사업’<\/span><\/p>/, '첫 화면 사업명');
+  assert.match(r.text, /<meta name="description" content="[^"]*사회복지공동모금회 2026년 기획 ‘북한이탈주민 지원사업’/);
+  assert.match(r.text, /<p class="footer-program">사회복지공동모금회 2026년 기획 ‘북한이탈주민 지원사업’<\/p>/, '하단');
   assert.match(r.text, /property="og:site_name" content="LOGIN : 人"/);
   assert.match(r.text, /<a class="brand" href="\/" aria-label="LOGIN : 人 처음으로">/);
   assert.match(r.text, /<div class="brand" role="img" aria-label="LOGIN : 人">/, '하단 로고');
@@ -41,11 +41,14 @@ test('첫 화면: 비로그인은 LOGIN : 人 브랜드·사업 소개·네 영�
     last = i;
   }
   assert.ok(r.text.includes(`${IN_MARK} : Network — 지역사회 네트워크`), '상단 영역 소개에 iN');
+  const lCard = sec.slice(sec.indexOf('log-card l'), sec.indexOf('log-card o'));
+  assert.match(lCard, /마음을 돌보고[^<]*<\/p>\s*<p class="area-link"><a href="https:\/\/cco-mho.pages.dev\/" target="_blank" rel="noopener noreferrer">https:\/\/cco-mho.pages.dev\/<\/a><\/p>/, 'L 소개 아래 꼬모 링크');
+  assert.equal((sec.match(/cco-mho/g) || []).length, 2, '링크는 L 카드에만');
   assert.ok(r.text.includes(`<b>${IN_MARK}</b><span>지역사회<br>네트워크</span>`), '장식 도장에 iN');
   for (const x of ['참여 대상', '신청·선정 절차', '우선순위에 따라 검토하고, 같은 순위에서는 먼저 신청한 순서를 따릅니다', '자동으로 확정되지 않습니다',
     'href="/forms"', '031-334-9966', 'href="/register"']) assert.ok(r.text.includes(x), x);
   for (const bad of ['요리교실', '통합사례회의', '전문 심리상담', '개별 사례관리', '회차', 'href="/board', 'LOG人', '로그人', 'LOGIN : IN',
-    'iNetwork', '>IN<', 'Organization</span><span class="area-ko">관계</span>', 'cco-mho', '<img', ...BANNED]) {
+    'iNetwork', '>IN<', 'Organization</span><span class="area-ko">관계</span>', '상담신청하기', '/me/counseling/apply', '<img', ...BANNED]) {
     assert.ok(!r.text.includes(bad), `비로그인 첫 화면에 "${bad}" 노출`);
   }
   assert.ok(!/<script/.test(r.text), '첫 화면은 스크립트를 불러오지 않음');
