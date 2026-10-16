@@ -63,7 +63,7 @@ export function participantsPage(ctx, { rows, status, approved, cap }) {
   return page(ctx, '신청자', html`
     <h1 class="page-title">신청자</h1>
     <p>승인된 참여자 <b>${approved} / ${cap}명</b> · 최초 신청 시각 순서입니다. ${REVIEW_NOTICE}
-      먼저 신청한 순서로 자동 확정하지 않으며, 담당자가 확인한 뒤 한 명씩 승인합니다.</p>
+      신청 순서대로 담당자가 확인한 뒤 한 명씩 승인합니다.</p>
     <form method="get" action="/admin/participants" class="filter">
       <label for="status">상태</label>
       <select id="status" name="status">

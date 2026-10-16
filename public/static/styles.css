@@ -318,15 +318,15 @@ fieldset.field{border:0}
 .area-desc{font-size:16.5px;line-height:1.75;word-break:keep-all}
 .log-card .desc{display:block;font-size:14px;color:var(--ink-soft);margin-top:4px;word-break:keep-all}
 .lead{font-size:18px;line-height:1.7;margin-bottom:22px;word-break:keep-all;max-width:36em}
-.guide-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start;
-  grid-template-areas:"intro steps" "target steps" "forms contact"}
-.guide-intro{grid-area:intro}.guide-target{grid-area:target}.guide-steps{grid-area:steps;align-self:stretch}
-.guide-forms{grid-area:forms;align-self:stretch}.guide-contact{grid-area:contact;align-self:stretch}
+/* 두 열을 각각 쌓아 카드 높이가 내용만큼만 되게 한다(왼쪽: 소개·대상·양식, 오른쪽: 절차·문의) */
+.guide-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start}
+.guide-col{display:flex;flex-direction:column;gap:20px;min-width:0}
 .target-main{font-weight:500;word-break:keep-all;margin-bottom:8px}
 .privacy-note{margin:12px 0 4px;padding:12px 14px;border-radius:10px;background:var(--paper-2);border:1px solid var(--line);word-break:keep-all}
 .privacy-note p{margin:0}
 .privacy-note .privacy-title{font-weight:600;margin-bottom:4px}
 .guide-intro p{word-break:keep-all;margin-bottom:10px}
+.guide-forms p,.guide-contact p{word-break:keep-all}
 .guide-intro .intro-title{font-family:var(--disp);font-weight:700;font-size:20px;margin-bottom:12px}
 .guide-intro .intro-close{font-weight:500;margin-bottom:0}
 .guide-grid .card{margin-bottom:0}
@@ -337,7 +337,11 @@ fieldset.field{border:0}
 .form-status{font-family:var(--ui);font-size:15px}
 @media (max-width:720px){
   .guide-grid,.forms-grid{grid-template-columns:minmax(0,1fr)}
-  .guide-grid{grid-template-areas:"intro" "target" "steps" "forms" "contact"}
+  /* 한 열에서는 소개 → 대상 → 절차 → 양식 → 문의 순서 */
+  .guide-grid{display:flex;flex-direction:column;align-items:stretch}
+  .guide-grid .card{width:100%}
+  .guide-col{display:contents}
+  .guide-intro{order:1}.guide-target{order:2}.guide-steps{order:3}.guide-forms{order:4}.guide-contact{order:5}
 }
 
 /* 인쇄(A4): 메뉴·버튼·장식 제외, 본문만 */
