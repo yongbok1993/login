@@ -21,6 +21,7 @@ function areaIntro() {
       ${stamp(k, [])}
       ${areaHead(k)}
       <p class="area-desc">${THEMES[k].desc}</p>
+      ${k === 'L' ? html`<p class="area-link"><a href="${SITE.lightLink}" target="_blank" rel="noopener noreferrer">${SITE.lightLink}</a></p>` : ''}
     </article>`)}
   </div>`;
 }
