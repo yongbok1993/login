@@ -100,8 +100,8 @@ export function homePage(ctx, groups) {
         </div>
         <div class="card guide-target">
           <h3 class="card-title">참여 대상</h3>
-          <p>북한이탈주민</p>
-          <p class="small muted">자세한 참여 기준은 ${SITE.orgName}(${SITE.tel})에 문의해 주세요. 승인된 참여자는 최대 ${PARTICIPANT_CAP}명입니다.</p>
+          <p class="target-main">중위소득 100% 이하 용인시에 거주 중인 북한이탈주민</p>
+          <p class="small muted">승인된 참여자는 최대 ${PARTICIPANT_CAP}명입니다. 궁금한 점은 ${SITE.orgName}(${SITE.tel})에 문의해 주세요.</p>
         </div>
         <div class="card guide-steps">
           <h3 class="card-title">신청·선정 절차</h3>
