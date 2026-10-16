@@ -313,7 +313,9 @@ fieldset.field{border:0}
 .area-title{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
 .area-title .area-name{font-family:var(--disp);font-size:22px;font-weight:700}
 .area-title .area-ko{font-family:var(--ui);font-size:16px;font-weight:500;color:var(--ink-soft)}
-.area-link{margin-top:10px;font-family:var(--ui);font-size:14px;color:var(--l);word-break:keep-all;overflow-wrap:anywhere}
+.areas-head{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:28px;row-gap:6px;margin-bottom:36px}
+.areas-head h2{margin-bottom:0}
+.mhcp-note{font-family:var(--ui);font-size:15px;color:var(--l);word-break:keep-all;overflow-wrap:anywhere}
 .area-desc{font-size:16.5px;line-height:1.75;word-break:keep-all}
 .log-card .desc{display:block;font-size:14px;color:var(--ink-soft);margin-top:4px;word-break:keep-all}
 .lead{font-size:18px;line-height:1.7;margin-bottom:22px;word-break:keep-all;max-width:36em}

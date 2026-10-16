@@ -21,7 +21,6 @@ function areaIntro() {
       ${stamp(k, [])}
       ${areaHead(k)}
       <p class="area-desc">${THEMES[k].desc}</p>
-      ${k === 'L' ? html`<p class="area-link">${SITE.lightNote}</p>` : ''}
     </article>`)}
   </div>`;
 }
@@ -74,7 +73,7 @@ export function homePage(ctx, groups) {
 
   <section id="areas" class="sec">
     <div class="wrap">
-      <div class="sec-head"><h2>네 가지 영역</h2></div>
+      <div class="sec-head areas-head"><h2>네 가지 영역</h2><p class="mhcp-note">${SITE.lightNote}</p></div>
       ${areaIntro()}
     </div>
   </section>

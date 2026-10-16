@@ -4,7 +4,7 @@ export const SITE = {
   serviceName: 'LOGIN : 人',
   orgName: '용인종합사회복지관',
   // 이 누리집이 쓰이는 사업(사회복지공동모금회 2026년 기획). 첫 화면·제목·검색 정보·하단에 표시한다.
-  // L : Light(정서 지원) 소개 아래 안내 문구(상담 웹사이트 개발 중)
+  // '네 가지 영역' 제목 옆 안내 문구(상담 웹사이트 개발 중)
   lightNote: '🚧MHCP(Mental-Health Counseling Program) 웹사이트 개발중🚧',
   programLabel: '사회복지공동모금회 2026년 기획 ‘북한이탈주민 지원사업’',
   projectName: '북한이탈주민의 정서적 안정 및 사회통합을 위한 지역사회 관계망 강화사업',
