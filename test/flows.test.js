@@ -46,13 +46,13 @@ test('첫 화면: 비로그인은 LOGIN : 人 브랜드·사업 소개·네 영�
   assert.equal((sec.match(/cco-mho/g) || []).length, 2, '링크는 L 카드에만');
   assert.ok(r.text.includes(`<b>${IN_MARK}</b><span>지역사회<br>네트워크</span>`), '장식 도장에 iN');
   const guide = r.text.slice(r.text.indexOf('id="guide"'));
-  const gorder = ['>사업 소개<', '>참여 대상<', '>신청·선정 절차<', '>신청서·동의서<', '>문의<'].map((x) => guide.indexOf(x));
+  const gorder = ['>사업 소개<', '>참여 대상<', '>신청서·동의서<', '>신청·선정 절차<', '>문의<'].map((x) => guide.indexOf(x));
   assert.ok(gorder.every((v, i) => v > 0 && (i === 0 || v > gorder[i - 1])), `참여 안내 순서 ${gorder}`);
   for (const x of ['LOGIN : 人 — 사람과 사람을 잇는 연결의 시작', '북한이탈주민이 마음을 나눌 이웃을 만나고 지역사회에 안정적으로 정착할 수 있도록 돕는 사업입니다.',
     '자신의 가능성을 발견할 수 있도록 지원합니다.', '혼자가 아닌 함께, 지역사회 안에서 새로운 연결을 시작합니다.',
     '중위소득 100% 이하 용인시에 거주 중인 북한이탈주민',
     '소중한 개인정보를 안전하게 보호합니다.', '작성한 신청서와 동의서는 작성자 본인과 관리자만 확인할 수 있습니다.']) assert.ok(guide.includes(x), x);
-  for (const x of ['참여 대상', '신청·선정 절차', '우선순위에 따라 검토하고, 같은 순위에서는 먼저 신청한 순서를 따릅니다', '자동으로 확정되지 않습니다',
+  for (const x of ['참여 대상', '신청·선정 절차', '먼저 신청한 순서대로(선착순) 선정합니다', '담당자가 확인한 뒤 참여 확정을 안내합니다',
     'href="/forms"', '031-334-9966', 'href="/register"']) assert.ok(r.text.includes(x), x);
   for (const bad of ['id="programs"', '2~11월 · 총 10회', '4·6·8·10월', '통합사례회의', '전문 심리상담', '개별 사례관리', '회차', 'href="/board', 'LOG人', '로그人', 'LOGIN : IN',
     'iNetwork', '>IN<', 'Organization</span><span class="area-ko">관계</span>', '상담신청하기', '/me/counseling/apply', '<img', ...BANNED]) {
@@ -729,7 +729,7 @@ test('운영 모드: 개발 표시 없음, 등록 동작, Secure 쿠키', async 
   });
   assert.equal(r.status, 303);
   assert.equal(r.headers.get('location'), '/register/done');
-  assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '2026-10-14');
+  assert.equal((await db.prepare('SELECT doc_version FROM consents').first()).doc_version, '2026-10-16');
 });
 
 test('SESSION_SECRET 없음·짧음: 비밀키를 DB에 자동 생성해 등록·로그인 동작, 이후 요청도 같은 키 사용', async (t) => {
@@ -789,18 +789,18 @@ test('기본 개인정보 수집·이용 동의문 표시, 동의 버전 기록,
   const { loadConsent } = await import('../src/config.js');
   const app = await startApp({ cfg: { consent: undefined } });
   t.after(app.close);
-  assert.equal(loadConsent(app.cfg).version, '2026-10-14');
+  assert.equal(loadConsent(app.cfg).version, '2026-10-16');
   const c = app.client();
   let r = await c.get('/register');
   for (const part of ['수집·이용 목적', '신청정보(필수): 이름, 휴대전화 번호', '계정정보(필수): 비밀번호', '담당자도 볼 수 없습니다',
     '접수정보(자동 생성): 신청 시각', '이용정보', '게시판', '접속기록', '보유·이용 기간', '동의를 거부할 권리', 'LOGIN : 人(북한이탈주민',
-    '우선순위에 따라 검토하고 같은 순위에서는 먼저 신청한 순서를 따르며']) assert.ok(r.text.includes(part), part);
+    '먼저 신청한 순서대로(선착순) 선정하며']) assert.ok(r.text.includes(part), part);
   for (const bad of ['주소', '생년월일', 'PIN', '로그人', 'LOG人']) assert.ok(!r.text.includes(bad), bad);
   r = await c.post('/register', { ...REG, consent: [] });
   assert.equal(r.status, 422);
   r = await c.post('/register', REG);
   assert.equal(r.location, '/register/done');
-  assert.equal((await app.sql.get('SELECT doc_version, agreed FROM consents')).doc_version, '2026-10-14');
+  assert.equal((await app.sql.get('SELECT doc_version, agreed FROM consents')).doc_version, '2026-10-16');
 
   const custom = await startApp({ cfg: { consent: undefined, consentJson: JSON.stringify({ version: 'v9', items: [{ key: 'privacy', title: '기관 문안', required: true, body: '본문' }] }) } });
   t.after(custom.close);

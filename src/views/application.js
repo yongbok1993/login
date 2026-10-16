@@ -3,8 +3,8 @@ import { formatPhone } from '../lib/phone.js';
 import { formatSeconds } from '../lib/time.js';
 import { APPLICATION_STATUS, applicationStatus } from '../services/users.js';
 
-// 선정 원칙(최신 사업계획서): 우선순위에 따라 검토하고, 같은 순위 안에서는 먼저 신청한 순서. 최종 승인은 담당자.
-export const SELECTION_NOTICE = '우선순위에 따라 검토하고, 같은 순위에서는 먼저 신청한 순서를 따릅니다.';
+// 선정 원칙: 선착순(신청 시각 순서). 최종 승인은 담당자.
+export const SELECTION_NOTICE = '먼저 신청한 순서대로(선착순) 선정합니다.';
 export const REVIEW_NOTICE = `${SELECTION_NOTICE} 참여 확정은 담당자 확인 후 안내합니다.`;
 export const PENDING_NOTICE = '신청이 접수되었습니다. 참여 확정 후 내부 서비스를 이용할 수 있습니다.';
 
