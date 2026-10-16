@@ -14,21 +14,14 @@ function areaHead(k, Tag = 'h3') {
   return Tag === 'h2' ? html`<h2 class="area-title">${head}</h2>` : html`<h3 class="area-title">${head}</h3>`;
 }
 
-/** 공개 영역 소개(네 영역 이름·짧은 설명) + 조금 떨어진 MHCP 안내 칸. 상세 프로그램은 넣지 않는다. */
+/** 공개 영역 소개(네 영역 이름·짧은 설명). 상세 프로그램은 넣지 않는다. */
 function areaIntro() {
-  return html`<div class="areas-row">
-    <div class="log-grid four">
-      ${THEME_ORDER.map((k) => html`<article class="log-card ${THEMES[k].key}">
-        ${stamp(k, [])}
-        ${areaHead(k)}
-        <p class="area-desc">${THEMES[k].desc}</p>
-      </article>`)}
-    </div>
-    <aside class="log-card mhcp">
-      <div class="stamp mhcp" aria-hidden="true"><b>🚧</b></div>
-      <h3 class="area-title"><span class="area-name">${SITE.mhcp.name}</span><span class="area-ko">${SITE.mhcp.full}</span></h3>
-      <p class="mhcp-status">${SITE.mhcp.status}</p>
-    </aside>
+  return html`<div class="log-grid four">
+    ${THEME_ORDER.map((k) => html`<article class="log-card ${THEMES[k].key}">
+      ${stamp(k, [])}
+      ${areaHead(k)}
+      <p class="area-desc">${THEMES[k].desc}</p>
+    </article>`)}
   </div>`;
 }
 
@@ -80,7 +73,7 @@ export function homePage(ctx, groups) {
 
   <section id="areas" class="sec">
     <div class="wrap">
-      <div class="sec-head"><h2>네 가지 영역</h2></div>
+      <div class="sec-head areas-head"><h2>네 가지 영역</h2><p class="mhcp-note">${SITE.lightNote}</p></div>
       ${areaIntro()}
     </div>
   </section>
