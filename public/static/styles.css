@@ -316,16 +316,19 @@ fieldset.field{border:0}
 .area-title .area-ko{font-family:var(--ui);font-size:16px;font-weight:500;color:var(--ink-soft)}
 /* 네 영역(기존 간격 22px) 옆에 조금 더 띄운 MHCP 안내 칸 */
 .areas-row{display:grid;grid-template-columns:minmax(0,1fr);row-gap:32px}
+.areas-row .log-card{text-align:center}
+.areas-row .log-card .stamp{margin-left:auto;margin-right:auto}
+.areas-row .area-title{align-items:center}
 .log-card.mhcp::before{background:var(--mhcp)}
 .stamp.mhcp{border-color:var(--mhcp);color:var(--mhcp);transform:rotate(-3deg)}
-.log-card.mhcp .area-ko{font-size:14px;line-height:1.45;word-break:keep-all}
-.mhcp-status{display:inline-block;margin-top:4px;padding:6px 12px;border-radius:999px;background:#F6EBD3;color:#6E5110;font-family:var(--ui);font-size:14.5px;font-weight:500}
-/* 넓은 화면: 다섯 칸 같은 너비. 빈 0px 열을 하나 끼워 MHCP 칸 앞 간격만 두 배(44px)로 */
+.log-card.mhcp .area-ko{font-size:13.5px;line-height:1.45;word-break:keep-all}
+.mhcp-status{margin-top:10px;font-family:var(--body);font-size:16.5px;font-weight:700;color:var(--ink)}
+/* 넓은 화면: 다섯 칸 한 줄. 빈 열을 끼워 MHCP 칸 앞만 넓게 띄우고, MHCP 칸은 조금 넓게 */
 @media (min-width:1101px){
-  .areas-row{grid-template-columns:repeat(4,minmax(0,1fr)) 0 minmax(0,1fr);column-gap:22px;align-items:stretch}
+  .areas-row{grid-template-columns:repeat(4,minmax(0,1fr)) 18px minmax(0,1.15fr);column-gap:22px;align-items:stretch}
   .areas-row > .log-grid.four{display:contents}
   .areas-row > .log-card.mhcp{grid-column:6}
-  .areas-row .log-card{padding:28px 18px}
+  .areas-row .log-card{padding:28px 16px}
   .areas-row .area-title .area-name{font-size:18px;white-space:nowrap}
 }
 .area-desc{font-size:16.5px;line-height:1.75;word-break:keep-all}

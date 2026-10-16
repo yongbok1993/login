@@ -42,7 +42,7 @@ test('첫 화면: 비로그인은 LOGIN : 人 브랜드·사업 소개·네 영�
   }
   assert.ok(r.text.includes(`${IN_MARK} : Network — 지역사회 네트워크`), '상단 영역 소개에 iN');
   const lCard = sec.slice(sec.indexOf('log-card l'), sec.indexOf('log-card o'));
-  assert.match(sec, /<aside class="log-card mhcp">[\s\S]*<span class="area-name">MHCP<\/span><span class="area-ko">Mental-Health Counseling Program<\/span>[\s\S]*<p class="mhcp-status">웹사이트 개발중<\/p>/, '네 영역 옆 MHCP 칸');
+  assert.match(sec, /<aside class="log-card mhcp">[\s\S]*<span class="area-name">MHCP<\/span><span class="area-ko">Mental-Health Counseling Program<\/span>[\s\S]*<p class="mhcp-status">웹사이트 개발 중<\/p>/, '네 영역 옆 MHCP 칸');
   assert.ok(sec.indexOf('log-card in') < sec.indexOf('log-card mhcp'), 'MHCP 칸은 네 영역 뒤');
   assert.ok(!lCard.includes('MHCP') && !sec.includes('cco-mho') && (sec.match(/class="mhcp-status"/g) || []).length === 1, '안내 문구는 한 곳, 링크 없음');
   assert.ok(r.text.includes(`<b>${IN_MARK}</b><span>지역사회<br>네트워크</span>`), '장식 도장에 iN');

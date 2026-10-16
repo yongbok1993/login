@@ -87,7 +87,7 @@ export function layout(ctx, { title, body, area = 'public', scripts = [] }) {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gowun+Batang:wght@400;700&family=Gowun+Dodum&family=Noto+Sans+KR:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="/static/styles.css">
+<link rel="stylesheet" href="/static/styles.css?v=${SITE.assetVersion}">
 ${scripts.map((src) => html`<script src="${src}" defer></script>`)}
 </head>
 <body class="area-${area}">
